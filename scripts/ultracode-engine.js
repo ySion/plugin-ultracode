@@ -2493,7 +2493,7 @@ async function executeStep(step, results, ctx, codexBin, codexHomeValue, retryWo
 }
 
 // Build a journaled worker-record entry for a settled step, mirroring the
-// runExplicitWorkflow worker shape so ultracode_status/resume read it unchanged.
+// runExplicitWorkflow worker shape so status/resume read it unchanged.
 function stepRecordFromExecution(step, execution, durationMs) {
   const usage = sumUsageFromWorkers(execution.workerResults);
   const dropped = (r) => r && (r.status === "failed" || r.status === "cancelled");
@@ -2695,8 +2695,8 @@ module.exports = {
   // Convenience re-export of the opt-in script runner. This is a LAZY wrapper:
   // the runner top-level-requires this engine, so the engine must NOT top-level
   // require the runner (that would form a require cycle and hand the runner a
-  // half-initialized engine). Requiring it at call time breaks the cycle. CLI/
-  // MCP still require the runner directly; this exists purely for convenience.
+  // half-initialized engine). Requiring it at call time breaks the cycle. The
+  // CLI requires the runner directly; this exists purely for convenience.
   runScript: (...args) => require("./ultracode-script-runner").runScript(...args),
   readWorkflow,
   compactWorkflow,

@@ -10,12 +10,10 @@ Ultracode is a Codex CLI plugin that gives Codex a parallel worker orchestration
 
 ## Main Components
 
-- `.codex-plugin/plugin.json` declares the plugin metadata, skills, interface, and MCP server.
-- `.mcp.json` points Codex at `scripts/run-node-tool.sh`.
+- `.codex-plugin/plugin.json` declares the plugin metadata, skills, and interface.
 - `scripts/ultracode-engine.js` owns worker spawning, schema validation, concurrency, usage accounting, persisted workflow state, resume, and exported scripted primitives.
 - `scripts/ultracode-script-runner.js` is the opt-in imperative Workflow-script runner. It runs arbitrary Node.js in-process with full host privileges; it is NOT a sandbox.
 - `scripts/app-server-client.js` is the dependency-free `codex app-server` JSON-RPC client for the opt-in `transport: 'app-server'` path.
-- `mcp/server.js` is the dependency-free MCP stdio server.
 - `scripts/ultracode-cli.js` is the CLI wrapper over the same engine.
 - `hooks/` contains the prompt hook that injects Ultracode guidance when a prompt mentions Ultracode.
 - `skills/ultracode/SKILL.md` is the model-facing usage guide.
@@ -28,7 +26,7 @@ Ultracode workers are real Codex subprocesses, not mocked agents. Worker output 
 
 Temporary schemas, last-message files, and isolated worktrees are created under the OS temp directory. They should not create tracked files in this repository.
 
-The Workflow-script runner executes arbitrary Node.js in-process with full host privileges. The MCP `ultracode_script` tool must remain disabled unless `ULTRACODE_ALLOW_SCRIPT=1`; do not weaken this gate or auto-dump `process.env`.
+The Workflow-script runner executes arbitrary Node.js in-process with full host privileges. Treat `scripts/ultracode-cli.js script` as equivalent to running `node <trusted-file>`; never auto-dump `process.env`.
 
 ## Testing
 
@@ -42,7 +40,7 @@ The suite runs entirely offline against a mock Codex binary. Tests must never ca
 ## Development Notes
 
 - Keep the engine dependency-free unless there is a strong reason to change that.
-- Preserve the existing MCP and CLI contracts when adding orchestration features.
+- Preserve the existing CLI and engine contracts when adding orchestration features.
 - Prefer explicit failures and logged events over silent fallbacks.
 - The script runner top-level-`require`s the engine; the engine must NOT top-level-`require` the runner.
 - Do not commit local `.claude/` files, `.DS_Store`, or generated run state.

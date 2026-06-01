@@ -64,14 +64,11 @@ if [ -z "${CODEX_CLI_PATH:-}" ]; then
 fi
 
 case "${1:-}" in
-  mcp)
-    exec "$NODE_BIN" "$PLUGIN_ROOT/mcp/server.js"
-    ;;
   prompt-hook)
     exec "$NODE_BIN" "$PLUGIN_ROOT/hooks/ultracode_prompt_context.js"
     ;;
   *)
-    echo "Usage: run-node-tool.sh {mcp|prompt-hook}" >&2
+    echo "Usage: run-node-tool.sh {prompt-hook}" >&2
     exit 64
     ;;
 esac

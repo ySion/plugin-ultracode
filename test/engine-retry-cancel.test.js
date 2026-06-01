@@ -228,7 +228,7 @@ test("external AbortSignal is mirrored into ctx and aborts spawns", async () => 
 // (C) Backward-compat: default path untouched
 // ---------------------------------------------------------------------------
 
-test("MCP/default path: no signal + maxRetries unset => completed, ctx not aborted", async () => {
+test("default path: no signal + maxRetries unset => completed, ctx not aborted", async () => {
   const ctx = createContext({ concurrency: 1 });
   const r = await withMockEnv({}, async () => spawnWorker("prompt", { ...mockOpts(), ctx }));
   assert.strictEqual(r.status, "completed");

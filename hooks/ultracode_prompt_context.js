@@ -2,6 +2,7 @@
 "use strict";
 
 const fs = require("fs");
+const path = require("path");
 
 function readStdin() {
   return fs.readFileSync(0, "utf8");
@@ -24,13 +25,20 @@ function main() {
     return;
   }
 
+  const pluginRoot = path.resolve(__dirname, "..");
+  const cliPath = path.join(pluginRoot, "scripts", "ultracode-cli.js");
+  const cliCommand = `node ${JSON.stringify(cliPath)}`;
+
   process.stdout.write(
     JSON.stringify({
       continue: true,
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
         additionalContext:
-          "Ultracode is available in this thread. If ultracode MCP tools are not directly visible, call tool_search for ultracode_run or ultracode first, then use the exposed MCP tools. Plan first when useful, run read-only workers by default, then synthesize and implement in the parent thread so important edits remain visible. If tool_search cannot find Ultracode, report a plugin/tool refresh problem instead of imitating a run manually."
+          `Ultracode is available through its CLI. Use \`${cliCommand} plan|run|pipeline|resume|status|script\` ` +
+          "from the shell when a parallel worker pass is useful. " +
+          "Keep workers read-only by default, use `pipeline` for staged DAGs, use `script` only for trusted local workflow scripts, " +
+          "then synthesize and implement in the parent thread so important edits remain visible."
       }
     })
   );

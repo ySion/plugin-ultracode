@@ -19,8 +19,8 @@
 // ---------------------------------------------------------------------------
 // !!! SECURITY — READ THIS. THIS IS NOT A SANDBOX. !!!
 // ---------------------------------------------------------------------------
-// runScript() executes ARBITRARY Node.js IN-PROCESS in the host (the MCP
-// server or the CLI) with FULL host privileges. The AsyncFunction transform
+// runScript() executes ARBITRARY Node.js IN-PROCESS in the host CLI process
+// with FULL host privileges. The AsyncFunction transform
 // below is PURELY ERGONOMIC and provides NO isolation whatsoever. A script
 // can require() any module, read/write any file the host user can, read
 // process.env (including Codex API keys / tokens, CODEX_HOME and every
@@ -31,13 +31,9 @@
 // Trust level: EXACTLY equal to the codex_bin and the worker sandbox you
 // already grant — whoever can author/point at a script can already run code as
 // the host user. The threat is therefore NOT "a script escaping a sandbox"
-// (there is none) but "an UNTRUSTED script reaching the runner", which the
-// CLI/MCP gating prevents:
-//   - CLI `script <path>`            : allowed by default (operator ran a local
-//                                      file from their own shell).
-//   - MCP `ultracode_script`         : DISABLED unless ULTRACODE_ALLOW_SCRIPT=1,
-//                                      and prefers an operator-controlled file
-//                                      `path` over inline `source`.
+// (there is none) but "an UNTRUSTED script reaching the runner". The CLI
+// `script <path>` command is allowed by default because the operator ran a
+// local file from their own shell.
 //
 // The persisted run record (under CODEX_HOME/ultracode/runs) and ctx.events
 // may capture whatever the script logs/returns and whatever a worker prints to
@@ -340,8 +336,8 @@ async function runScript(input = {}) {
   // Capture orphan (un-awaited) promise rejections from the script. A
   // fire-and-forget rejection (e.g. `Promise.reject(x)` with no await) fires on
   // a later tick — outside the try/await below — and would otherwise become a
-  // process-level 'unhandledRejection' that crashes a long-lived host such as
-  // the MCP server. A scoped listener installed only for the run both suppresses
+  // process-level 'unhandledRejection' that crashes the host process. A scoped
+  // listener installed only for the run both suppresses
   // Node's default crash and surfaces the rejection as a record warning.
   // (Under rare concurrent runs every listener sees every rejection; that
   // over-reports but never crashes — acceptable for the trusted-code model.)

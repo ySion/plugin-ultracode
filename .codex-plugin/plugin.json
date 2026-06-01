@@ -45,6 +45,5 @@
     ],
     "brandColor": "#2563EB",
     "websiteURL": "https://github.com/just-every/plugin-ultracode"
-  },
-  "mcpServers": "./.mcp.json"
+  }
 }
