@@ -13,6 +13,7 @@ const NUMERIC_KEYS = new Set([
   "concurrency",
   "budget_tokens",
   "max_agents",
+  "launch_stagger_ms",
   "max_retries",
   "base_delay_ms",
   "max_delay_ms"

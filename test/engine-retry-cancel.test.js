@@ -88,6 +88,27 @@ test("permanent auth error is NOT retried", async () => {
   assert.strictEqual(parseInt(fs.readFileSync(counter, "utf8"), 10), 1, "auth error short-circuits");
 });
 
+test("transient auth-refresh error restarts once even when maxRetries is unset", async () => {
+  const counter = freshCounterPath();
+  const events = [];
+  const ctx = createContext({ concurrency: 1, onEvent: (e) => events.push(e) });
+  const r = await withMockEnv(
+    {
+      MOCK_CODEX_FAIL_TIMES: "1",
+      MOCK_CODEX_EXIT: "1",
+      MOCK_CODEX_STDERR: "Authentication expired. OAuth refresh temporarily unavailable (503): server busy",
+      MOCK_CODEX_COUNTER: counter
+    },
+    async () => spawnWorker("prompt", { ...mockOpts(), ctx, baseDelayMs: 1, maxDelayMs: 1, retryJitter: false })
+  );
+  assert.strictEqual(r.status, "completed", "auth-refresh race recovers on the implicit restart");
+  assert.strictEqual(parseInt(fs.readFileSync(counter, "utf8"), 10), 2, "initial failure + implicit restart");
+  const retries = events.filter((e) => e.type === "worker.retry");
+  assert.strictEqual(retries.length, 1);
+  assert.strictEqual(retries[0].max_retries, 1);
+  assert.match(retries[0].reason, /auth refresh/);
+});
+
 test("default no-op: maxRetries unset, generic stderr => failed after ONE invocation", async () => {
   const counter = freshCounterPath();
   const events = [];

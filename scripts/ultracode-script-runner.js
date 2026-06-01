@@ -29,6 +29,8 @@ const crypto = require("crypto");
 const fs = require("fs/promises");
 const path = require("path");
 
+const { transformSource } = require("./script-source-transform");
+
 // Top-level require of the engine is intentional and safe: the engine must
 // NOT top-level require this runner (it uses a lazy require wrapper), so there
 // is no require cycle. See ultracode-engine.js runScript re-export.
@@ -66,27 +68,14 @@ function scriptId() {
 // one residual that is NOT contained; that matches normal Node script execution.)
 //
 // ES module sugar is tolerated so a `.workflow.js` file can be authored with
-// editor module support:
-//   - `export default <expr>`  -> `return <expr>` (line-anchored, FIRST so it
-//     wins over the generic strip; a naive strip would turn this into a
-//     SyntaxError).
-//   - leading `export const|let|var|async|function|class` -> the bare decl
-//     (line-anchored so a string literal containing "export const" mid-line is
-//     NOT rewritten).
+// editor module support. The transform is lexical, so nested workflow source
+// strings keep their own `export default` until the nested runner compiles them:
+//   - `export default <expr>` -> `return <expr>`.
+//   - leading `export const|let|var|async|function|class` -> the bare decl.
 //
 // A `"use strict";` prelude is prepended so an undeclared assignment throws
 // ("x is not defined") instead of silently leaking a host global.
 // ---------------------------------------------------------------------------
-
-const EXPORT_DEFAULT_RE = /^[ \t]*export\s+default\s+/m;
-const EXPORT_DECL_RE = /^[ \t]*export\s+(const|let|var|async|function|class)\b/gm;
-
-function transformSource(source) {
-  let body = String(source == null ? "" : source);
-  body = body.replace(EXPORT_DEFAULT_RE, "return ");
-  body = body.replace(EXPORT_DECL_RE, "$1");
-  return `"use strict";\n${body}`;
-}
 
 // AsyncFunction constructor (function scope, not a fresh global).
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -207,6 +196,7 @@ function buildScope(ctx, input) {
       concurrency: input.concurrency,
       budget_tokens: input.budget_tokens,
       max_agents: input.max_agents,
+      launch_stagger_ms: input.launch_stagger_ms,
       max_retries: input.max_retries,
       base_delay_ms: input.base_delay_ms,
       max_delay_ms: input.max_delay_ms,
@@ -270,6 +260,7 @@ async function runScript(input = {}) {
     concurrency: input.concurrency,
     budgetTokens: input.budget_tokens,
     maxAgents: input.max_agents,
+    launchStaggerMs: input.launch_stagger_ms,
     depth: Number(process.env.ULTRACODE_DEPTH || 0),
     onEvent: typeof input.on_event === "function" ? input.on_event : null,
     signal: input.signal
@@ -290,6 +281,7 @@ async function runScript(input = {}) {
       concurrency: ctx.concurrency,
       budget_tokens: ctx.budget.total,
       max_agents: ctx.maxAgents,
+      launch_stagger_ms: ctx.launchStaggerMs,
       max_retries: input.max_retries === undefined ? null : input.max_retries,
       base_delay_ms: input.base_delay_ms === undefined ? null : input.base_delay_ms,
       max_delay_ms: input.max_delay_ms === undefined ? null : input.max_delay_ms,

@@ -43,6 +43,16 @@ test("transform: a string literal containing 'export const' mid-line is NOT rewr
   assert.match(out, /"do not export const this"/);
 });
 
+test("transform: nested workflow source keeps its export default for the nested run", () => {
+  const out = transformSource(
+    ["const nested = await workflow(`", "export default { inner: true };", "`);", "export default { ok: true, nested };"].join("\n")
+  );
+  assert.match(out, /^"use strict";/);
+  assert.match(out, /`\nexport default \{ inner: true \};\n`/);
+  assert.match(out, /\nreturn \{ ok: true, nested \};/);
+  assert.strictEqual((out.match(/export default/g) || []).length, 1);
+});
+
 test("runScript: top-level return is captured as result and top-level await works", async () => {
   const rec = await runScript({
     source: "const x = await Promise.resolve(41); return { answer: x + 1 };",
@@ -343,6 +353,17 @@ test("path mode: a throwing fixture journals status:failed (host survives)", asy
 // ---------------------------------------------------------------------------
 // workflow() depth guard.
 // ---------------------------------------------------------------------------
+
+test("workflow(): nested source can export default while the outer workflow also exports", async () => {
+  const rec = await runScript({
+    source: ["const child = await workflow(`", "export default { inner: true };", "`);", "export default { ok: true, child: child.result };"].join(
+      "\n"
+    ),
+    ...baseOpts()
+  });
+  assert.strictEqual(rec.status, "completed");
+  assert.deepStrictEqual(rec.result, { ok: true, child: { inner: true } });
+});
 
 test("workflow() refuses beyond depth 1 with a clear error and logs", async () => {
   const prevDepth = process.env.ULTRACODE_DEPTH;

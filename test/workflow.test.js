@@ -62,6 +62,31 @@ test("workers_spec: explicit path runs both specs (incl schema:null), stores spe
   });
 });
 
+test("workers_spec: concurrent launch is slightly staggered inside one workflow", async () => {
+  await withCodexHome(async (home) => {
+    const wf = await withMockEnv({ MOCK_CODEX_RESPONSE: "ok" }, async () =>
+      runWorkflow({
+        cwd: home,
+        codex_bin: MOCK,
+        codex_home: home,
+        concurrency: 3,
+        launch_stagger_ms: 8,
+        workers_spec: [
+          { prompt: "spec one", label: "alpha", schema: null },
+          { prompt: "spec two", label: "beta", schema: null },
+          { prompt: "spec three", label: "gamma", schema: null }
+        ]
+      })
+    );
+
+    assert.strictEqual(wf.status, "completed");
+    assert.strictEqual(wf.options.launch_stagger_ms, 8);
+    const staggers = wf.events.filter((e) => e.type === "worker.launch_stagger");
+    assert.ok(staggers.length >= 2, `expected at least two staggered starts, got ${staggers.length}`);
+    assert.ok(staggers.every((e) => e.delay_ms >= 0 && e.delay_ms <= 20), "stagger delays stay tiny");
+  });
+});
+
 test("partial status: exactly one of two workers fails => status 'partial'", async () => {
   await withCodexHome(async (home) => {
     // runExplicitWorkflow uses one shared codex_bin for every spec. To get a

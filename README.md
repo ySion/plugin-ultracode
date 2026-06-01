@@ -183,7 +183,7 @@ ordinary code with `await`, `map`/`filter`/`sort`, and arbitrary host-side reduc
 | `source` **xor** `path` | the script body inline, **or** a path to a `.js`/`.workflow.js` file. Exactly one is required (both/neither throws). `path` is read by **contents** (dirname-independent). |
 | `args` | arbitrary object exposed to the script as the bound `args`. |
 | `cwd` | workspace directory for child workers. |
-| `concurrency` / `budget_tokens` / `max_agents` | the shared limiter / soft token cap / lifetime spawn cap (same semantics as CLI `run`). |
+| `concurrency` / `budget_tokens` / `max_agents` / `launch_stagger_ms` | the shared limiter / soft token cap / lifetime spawn cap / tiny per-workflow subprocess launch stagger (same semantics as CLI `run`). |
 | `max_retries` / `base_delay_ms` / `max_delay_ms` / `retry_jitter` | journaled into `options`. |
 | `signal` / `on_event` | abort signal and progress sink (wired by the CLI's Ctrl-C and `--progress`). |
 | `codex_bin` / `codex_home` | spawn defaults threaded into every agent. |
@@ -219,7 +219,7 @@ numbers will not match the source.
 ```jsonc
 { "id": "ultra-<stamp>-<hex>", "kind": "script", "status": "completed" /* | "failed" */,
   "started_at": "...", "completed_at": "...", "duration_ms": 0, "cwd": "...",
-  "options": { "concurrency": 4, "budget_tokens": null, "max_agents": 1000,
+  "options": { "concurrency": 4, "budget_tokens": null, "max_agents": 1000, "launch_stagger_ms": 25,
                "max_retries": null, "base_delay_ms": null, "max_delay_ms": null, "retry_jitter": null },
   "state_path": "$CODEX_HOME/ultracode/runs/ultra-....json",
   "workers": [],            // always [] — a script record is not step-resumable
@@ -405,12 +405,13 @@ out.
 
 `pipeline` is fully additive: it is a sibling CLI command that reuses the same engine machinery (context,
 limiter, budget, journaled record shape) and does not change any existing CLI command or engine export. The
-`workers_spec` and fixed-role paths are byte-for-byte unchanged.
+`workers_spec` and fixed-role paths keep their existing contract, with the shared launch-stagger and auth-refresh
+retry protections applied by the context.
 
 The warm-context executor (`executor`, `spawnWarmWorker`, `runPipeline.warm`) is likewise additive and opt-in: it
 defaults to the cold ephemeral fan-out and falls back to it on any resume failure, so existing flows are unaffected.
 
-The CLI `script` command is additive: existing CLI commands keep byte-identical contracts, and the engine only
-gains a single lazy `runScript` re-export (call-time `require`, no require cycle), so existing engine exports are
-unchanged. Script records (`kind: "script"`) journal into the same `$CODEX_HOME/ultracode/runs/` directory and
+The CLI `script` command is additive: the engine only gains a single lazy `runScript` re-export (call-time
+`require`, no require cycle), so existing engine exports are unchanged. Script records (`kind: "script"`) journal
+into the same `$CODEX_HOME/ultracode/runs/` directory and
 are read by `status` unchanged; `resume` returns a clean no-op message for them (they carry `workers: []`).

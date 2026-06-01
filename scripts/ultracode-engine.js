@@ -18,6 +18,7 @@ const DEFAULT_WORKERS = 3;
 const DEFAULT_TIMEOUT_MS = 20 * 60 * 1000;
 const DEFAULT_MAX_AGENTS = 1000;
 const MAX_NESTING_DEPTH = 1;
+const DEFAULT_LAUNCH_STAGGER_MS = 25;
 const VALID_SANDBOXES = new Set(["read-only", "workspace-write", "danger-full-access"]);
 const VALID_EFFORTS = new Set(["low", "medium", "high", "xhigh"]);
 // Worker transports. 'exec' (default) = today's `codex exec --json` JSONL
@@ -376,6 +377,10 @@ function createContext(opts = {}) {
     opts.budgetTokens === undefined || opts.budgetTokens === null || opts.budgetTokens === ""
       ? null
       : Math.max(0, Math.floor(Number(opts.budgetTokens)));
+  const launchStaggerMs = clampNonNegInt(
+    firstDefined(opts.launchStaggerMs, opts.launch_stagger_ms, process.env.ULTRACODE_LAUNCH_STAGGER_MS),
+    DEFAULT_LAUNCH_STAGGER_MS
+  );
 
   // Cancellation: ctx owns an internal AbortController whose signal threads down
   // into every spawn. When no external signal is supplied, the controller is
@@ -392,6 +397,8 @@ function createContext(opts = {}) {
     events: [],
     spawnedCount: 0,
     maxAgents: opts.maxAgents ? Math.max(1, Math.floor(Number(opts.maxAgents))) : DEFAULT_MAX_AGENTS,
+    launchStaggerMs,
+    nextLaunchAt: 0,
     depth: Number.isFinite(opts.depth) ? opts.depth : 0,
     maxDepth: Number.isFinite(opts.maxDepth) ? opts.maxDepth : MAX_NESTING_DEPTH,
     onEvent: typeof opts.onEvent === "function" ? opts.onEvent : null,
@@ -521,8 +528,15 @@ const PERMANENT_SPAWN_CODES = new Set(["ENOENT", "EACCES", "EPERM", "ENOTDIR"]);
 // errno that can transiently happen when the freshly-written/locked bin is busy.
 const TRANSIENT_SPAWN_CODES = new Set(["ETXTBSY"]);
 
+// Auth refresh races can appear as "Authentication expired" plus a refresh-token
+// diagnostic. Keep permanent credential failures separate from refresh transport
+// failures so bad login state stays loud, while a refresh server/race hiccup can
+// be restarted once even when broad transient retries are off.
+const PERMANENT_AUTH_REFRESH_RE = /authentication required|run [`']?(?:code|codex) login|invalid api key|invalid_grant|invalid_client|refresh token (?:expired|already (?:used|rotated)|revoked|invalidated|unavailable; please sign in)|please (?:log out and )?sign in again/i;
+const TRANSIENT_AUTH_REFRESH_RE = /(?:authentication expired\.\s*)?\b(?:oauth|auth|access token|token|refresh token)\b.{0,120}(?:temporar(?:ily)? unavailable|server busy|timed? out|timeout|network|connection reset|connection refused|econnreset|econnrefused|etimedout|5\d\d|429|try again|unexpected response)/i;
 // Permanent stderr/stdout signatures (auth / bad-flag / usage / schema). Checked
-// FIRST so e.g. an "unauthorized" message is never mistaken for transient.
+// before generic retryable output so e.g. an "unauthorized" message is never
+// mistaken for transient.
 const PERMANENT_OUTPUT_RE = /unauthorized|invalid api key|authentication|forbidden\b|permission denied|unknown (option|argument|flag)|unrecognized|invalid value|schema|usage:/i;
 // Retryable signatures: HTTP 429/5xx, rate-limit, known network errno, overload.
 const RETRYABLE_OUTPUT_RE = /\b(429|5\d\d)\b|rate.?limit|too many requests|temporarily unavailable|timed? out|timeout|connection reset|connection refused|econnreset|econnrefused|etimedout|enetunreach|eai_again|socket hang up|network|server error|service unavailable|overloaded|please try again/i;
@@ -546,14 +560,24 @@ function classifyCodexError(error, execResult) {
     return { transient: false, reason: "timed out" };
   }
   const haystack = exec ? `${exec.stderr || ""}\n${exec.stdout || ""}` : "";
-  // Permanent patterns win over retryable ones.
+  const runtimeFailed =
+    exec &&
+    ((typeof exec.exit_code === "number" && exec.exit_code !== 0) ||
+      (exec.signal && exec.cancelled !== true && exec.timed_out !== true));
+  // Permanent auth refresh patterns win over retryable ones.
+  if (haystack && PERMANENT_AUTH_REFRESH_RE.test(haystack)) {
+    return { transient: false, reason: "permanent error pattern" };
+  }
+  if (runtimeFailed && haystack && TRANSIENT_AUTH_REFRESH_RE.test(haystack)) {
+    return { transient: true, reason: "retryable: auth refresh", defaultMaxRetries: 1 };
+  }
+  // Permanent patterns win over generic retryable ones.
   if (haystack && PERMANENT_OUTPUT_RE.test(haystack)) {
     return { transient: false, reason: "permanent error pattern" };
   }
   // Only a genuinely non-zero exit (not a schema/read failure on a clean exit)
   // qualifies as a retryable runtime error.
-  const nonZero = exec && typeof exec.exit_code === "number" && exec.exit_code !== 0;
-  if (nonZero && haystack && RETRYABLE_OUTPUT_RE.test(haystack)) {
+  if (runtimeFailed && haystack && RETRYABLE_OUTPUT_RE.test(haystack)) {
     const m = RETRYABLE_OUTPUT_RE.exec(haystack);
     return { transient: true, reason: m ? `retryable: ${m[0]}` : "retryable error pattern" };
   }
@@ -604,6 +628,26 @@ function abortError(signal) {
   err.code = "ABORT_ERR";
   err.cancelled = true;
   return err;
+}
+
+function reserveLaunchStagger(ctx) {
+  if (!ctx || !ctx.launchStaggerMs || ctx.concurrency <= 1) return 0;
+  const now = Date.now();
+  const active = ctx.limiter && typeof ctx.limiter.active === "function" ? ctx.limiter.active() : 0;
+  if (active <= 1) {
+    ctx.nextLaunchAt = now + ctx.launchStaggerMs;
+    return 0;
+  }
+  const startAt = Math.max(now, ctx.nextLaunchAt || now);
+  ctx.nextLaunchAt = startAt + ctx.launchStaggerMs;
+  return Math.max(0, startAt - now);
+}
+
+async function waitForLaunchStagger(ctx, label, phase) {
+  const delayMs = reserveLaunchStagger(ctx);
+  if (delayMs <= 0) return;
+  emitEvent(ctx, { type: "worker.launch_stagger", label, phase, delay_ms: delayMs });
+  await abortableDelay(delayMs, ctx ? ctx.signal : undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -1252,6 +1296,15 @@ async function spawnWorkerGuarded(prompt, opts, ctx, resumeSessionId = null) {
       }
       const loopGate = capExceeded();
       if (loopGate) return loopGate;
+      try {
+        await waitForLaunchStagger(ctx, label, phase);
+      } catch {
+        emitEvent(ctx, { type: "worker.cancelled", label, phase });
+        log(ctx, `Worker "${label}" cancelled during launch stagger.`, { label, reason: "cancelled" });
+        return cancelledWorker(label, phase, "cancelled");
+      }
+      const postStaggerGate = capExceeded();
+      if (postStaggerGate) return postStaggerGate;
       if (ctx) ctx.spawnedCount += 1;
       let attemptResult;
       try {
@@ -1312,12 +1365,13 @@ async function spawnWorkerGuarded(prompt, opts, ctx, resumeSessionId = null) {
         }
 
         // Classify: transient (retry with backoff) vs permanent (fail now, as the
-        // engine always did). maxRetries defaults to 0 so this branch is inert
-        // unless a caller opts in.
+        // engine always did). maxRetries defaults to 0; only narrowly-classified
+        // auth-refresh races get one implicit restart without an explicit retry budget.
         const classification = classifyCodexError(error, execResult);
+        const effectiveMaxRetries = Math.max(opts.maxRetries, classification.defaultMaxRetries || 0);
         const canRetry =
           classification.transient &&
-          transientAttempt < opts.maxRetries &&
+          transientAttempt < effectiveMaxRetries &&
           !(ctx && ctx.signal && ctx.signal.aborted) &&
           !capExceeded();
         if (canRetry) {
@@ -1328,13 +1382,13 @@ async function spawnWorkerGuarded(prompt, opts, ctx, resumeSessionId = null) {
             label,
             phase,
             attempt: transientAttempt,
-            max_retries: opts.maxRetries,
+            max_retries: effectiveMaxRetries,
             reason: classification.reason,
             delay_ms: backoffMs
           });
           log(
             ctx,
-            `Worker "${label}" transient failure (${classification.reason}); retry ${transientAttempt}/${opts.maxRetries} in ${backoffMs}ms.`,
+            `Worker "${label}" transient failure (${classification.reason}); retry ${transientAttempt}/${effectiveMaxRetries} in ${backoffMs}ms.`,
             { label, reason: "transient-retry", attempt: transientAttempt, delay_ms: backoffMs }
           );
           try {
@@ -1869,6 +1923,7 @@ async function runExplicitWorkflow(input) {
     concurrency: input.concurrency,
     budgetTokens: input.budget_tokens,
     maxAgents: input.max_agents,
+    launchStaggerMs: input.launch_stagger_ms,
     depth: Number(process.env.ULTRACODE_DEPTH || 0),
     onEvent: typeof input.on_event === "function" ? input.on_event : null,
     signal: input.signal
@@ -1897,6 +1952,7 @@ async function runExplicitWorkflow(input) {
       concurrency: ctx.concurrency,
       budget_tokens: ctx.budget.total,
       max_agents: ctx.maxAgents,
+      launch_stagger_ms: ctx.launchStaggerMs,
       explicit: true,
       ...retryOpts.journal,
       ...transportJournal(transport, transportStrict)
@@ -1976,6 +2032,7 @@ async function runWorkflow(input = {}) {
     concurrency: input.concurrency,
     budgetTokens: input.budget_tokens,
     maxAgents: input.max_agents,
+    launchStaggerMs: input.launch_stagger_ms,
     depth: Number(process.env.ULTRACODE_DEPTH || 0),
     onEvent: typeof input.on_event === "function" ? input.on_event : null,
     signal: input.signal
@@ -1998,6 +2055,7 @@ async function runWorkflow(input = {}) {
       concurrency: ctx.concurrency,
       budget_tokens: ctx.budget.total,
       max_agents: ctx.maxAgents,
+      launch_stagger_ms: ctx.launchStaggerMs,
       ...retryOpts.journal,
       ...transportJournal(options.transport, options.transport_strict)
     },
@@ -2054,6 +2112,7 @@ async function resumeWorkflow(input = {}) {
     concurrency: record.options && record.options.concurrency,
     budgetTokens: record.options && record.options.budget_tokens,
     maxAgents: record.options && record.options.max_agents,
+    launchStaggerMs: firstDefined(input.launch_stagger_ms, record.options && record.options.launch_stagger_ms),
     depth: Number(process.env.ULTRACODE_DEPTH || 0),
     onEvent: typeof input.on_event === "function" ? input.on_event : null,
     signal: input.signal
@@ -2586,6 +2645,7 @@ async function runPipelineSpec(input = {}) {
     concurrency: input.concurrency,
     budgetTokens: input.budget_tokens,
     maxAgents: input.max_agents,
+    launchStaggerMs: input.launch_stagger_ms,
     depth: Number(process.env.ULTRACODE_DEPTH || 0),
     onEvent: typeof input.on_event === "function" ? input.on_event : null,
     signal: input.signal
@@ -2616,6 +2676,7 @@ async function runPipelineSpec(input = {}) {
       concurrency: ctx.concurrency,
       budget_tokens: ctx.budget.total,
       max_agents: ctx.maxAgents,
+      launch_stagger_ms: ctx.launchStaggerMs,
       pipeline: true,
       ...retryOpts.journal,
       ...transportJournal(transport, transportStrict)

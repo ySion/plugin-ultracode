@@ -52,10 +52,39 @@ test("retryable patterns (429 / 5xx / rate-limit / network errno) are transient"
   }
 });
 
+test("transient auth-refresh races are retryable with one implicit restart", () => {
+  const cases = [
+    "Authentication expired. OAuth refresh temporarily unavailable (503): server busy",
+    "Failed to refresh token: 500: upstream unavailable",
+    "auth token refresh timed out; please try again"
+  ];
+  for (const stderr of cases) {
+    const c = classifyCodexError(new Error("x"), execOf({ stderr }));
+    assert.strictEqual(c.transient, true, `"${stderr}" should be transient`);
+    assert.strictEqual(c.defaultMaxRetries, 1, `"${stderr}" should get one implicit restart`);
+    assert.match(c.reason, /auth refresh/);
+  }
+});
+
+test("transient auth-refresh race remains retryable when the child exited by signal", () => {
+  const c = classifyCodexError(
+    new Error("worker exited with SIGTERM"),
+    execOf({
+      exit_code: null,
+      signal: "SIGTERM",
+      stderr: "Authentication expired. Failed to refresh token: 500: server busy"
+    })
+  );
+  assert.strictEqual(c.transient, true);
+  assert.strictEqual(c.defaultMaxRetries, 1);
+});
+
 test("permanent patterns win over retryable ones (auth/schema/usage/bad-flag)", () => {
   const cases = [
     "Unauthorized: invalid api key",
     "authentication failed",
+    "Authentication expired. OAuth error (invalid_grant): refresh token expired",
+    "Authentication expired. refresh token already rotated; please sign in again",
     "Forbidden",
     "permission denied",
     "error: unknown option --foo",
@@ -137,7 +166,7 @@ test("abortableDelay rejects promptly when aborted mid-wait", async () => {
 // resolveWorkerOpts / resolveRetryInput defaults
 // ---------------------------------------------------------------------------
 
-test("resolveWorkerOpts defaults make transient retries a no-op", () => {
+test("resolveWorkerOpts defaults keep generic transient retries opt-in", () => {
   const o = resolveWorkerOpts({});
   assert.strictEqual(o.maxRetries, 0);
   assert.strictEqual(o.baseDelayMs, 500);

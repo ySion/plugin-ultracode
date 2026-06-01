@@ -40,6 +40,8 @@ Default fixed-role fan-out:
 Orchestration controls (all optional, all backward-compatible):
 
 - `concurrency`: max simultaneous Codex subprocesses. Defaults to `min(16, cores-2)`.
+- `launch_stagger_ms`: tiny per-workflow delay between simultaneous subprocess starts. Default `25`, override with
+  `ULTRACODE_LAUNCH_STAGGER_MS`, or set `0` to disable.
 - `budget_tokens`: best-effort total token budget — a pre-spawn gate checked when a worker is admitted, with
   usage accounted after each worker completes. New workers are skipped (and the cap logged) once exceeded, but
   with concurrency N up to N in-flight workers may still finish past the budget. A soft cap, not a hard
@@ -47,12 +49,13 @@ Orchestration controls (all optional, all backward-compatible):
 - `max_agents`: lifetime cap on spawned workers for the run (default 1000).
 
 Transient-retry knobs (retries fire **only** on classified transient errors — HTTP 429/5xx, rate-limit,
-network errno — never on auth/bad-flag/schema/timeout/unknown failures):
+network errno, or transient auth-refresh races — never on login-required/bad-credential/bad-flag/schema/timeout/unknown failures):
 
 - `max_retries`: per-worker transient retries. Default `0` (byte-identical to the pre-retry engine).
 - `base_delay_ms`: base backoff delay. Default `500`.
 - `max_delay_ms`: backoff cap. Default `30000`.
 - `retry_jitter`: full-jitter in `[0, min(max, base*2^attempt)]`. Default `true`.
+- Transient auth-refresh races get one implicit restart even when `max_retries` is `0`.
 
 Schema-mismatch retries are a separate counter (default `1` when a schema is set, else `0`) and never consume
 the transient-retry budget.
@@ -81,7 +84,7 @@ A declarative directed-acyclic graph of stages. Scheduling is **barrier-free** (
 unknown/self dependency, and cycles all throw, with zero side effects.
 
 Top-level args mirror `run`'s orchestration controls — `cwd`, `sandbox`, `model`, `reasoning_effort`,
-`timeout_ms`, `codex_bin`, `codex_home`, `concurrency`, `budget_tokens`, `max_agents`, the retry knobs,
+`timeout_ms`, `codex_bin`, `codex_home`, `concurrency`, `launch_stagger_ms`, `budget_tokens`, `max_agents`, the retry knobs,
 `transport`, `transport_strict`, and an optional descriptive `task` — plus:
 
 - `steps` (required): array of step objects (at least one).
