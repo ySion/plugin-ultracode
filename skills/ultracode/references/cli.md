@@ -114,7 +114,8 @@ Each step:
 - `parallel`-only (`kind: "parallel"`): `fanout` (int, default 1) **or** `items` (array, each exposed via
   `{{item.<key>}}`).
 
-The result is the same journaled record shape as `run`, so `status` and `resume` read it unchanged. Pipeline
+Pipeline records include a top-level `steps[]` array and keep `workers[]` as the same step records for existing
+`status` and `resume` readers. Completed worker/step records expose both `result` and `value` aliases. Pipeline
 resume is **partial**: re-running an upstream step does not re-render or cascade to downstream dependents.
 
 ## `resume` / `status` arguments
@@ -129,7 +130,7 @@ resume is **partial**: re-running an upstream step does not re-render or cascade
 one `ctx` (concurrency limiter, usage accumulator, `budget`, lifetime cap, progress sink) from
 `createContext(opts)`. Inside a Workflow `script` these are pre-bound (ctx auto-injected) — see below.
 
-- `spawnWorker(prompt, opts)` → one `codex exec` worker; returns `{status, value, usage, ...}`. With
+- `spawnWorker(prompt, opts)` → one `codex exec` worker; returns `{status, value, result, usage, ...}`. With
   `opts.schema` it validates and retries once on mismatch; with `schema: null` it returns raw text. Never throws.
 - `spawnWarmWorker(prompt, opts)` → like `spawnWorker` but returns a handle whose `.turn(prompt)` resumes the
   **same** warm Codex session (`executor: "resume"`); any resume the CLI cannot honor falls back to cold exec.
@@ -152,15 +153,18 @@ Bound scope (ctx is auto-injected — never pass it):
 
 - `agent(prompt, opts?)` → the worker `value` on completion, else `null` (failure already logged). The
   ergonomic happy-path primitive.
-- `spawnWorker(prompt, opts?)` → the full `{status, value, usage, ...}` record (advanced).
+- `spawnWorker(prompt, opts?)` → the full `{status, value, result, usage, ...}` record (advanced).
 - `parallel(thunks)` → barrier gather; throwing thunk → `null`.
 - `pipeline(items, ...stages)` → **variadic**; each stage receives `(prev, item, index, ctx)`; barrier-free.
-- `loopUntilDry(makePrompt, opts?)`, `adversarialVerify(findings, opts?)` → as above.
+- `loopUntilDry(makePrompt, opts?)`, `adversarialVerify(findings, opts?)` → as above; both inherit the current
+  `phase()` by default inside scripts.
 - `log(message, data?)`, `phase(title)`, `workflow(pathOrSource, args?)` (one-level nested run).
 - `budget` (`{ total, spent(), remaining() }`), `args`, `ctx`, `WORKER_SCHEMA`, `VERDICT_SCHEMA`.
 
-Top-level `await` and a top-level `return` (or `export default <expr>`) become `record.result`, a journaled
-`kind: "script"` record readable by `status`. See `examples/parallel-reduce.workflow.js` and
+Top-level `await` and a top-level `return` (or top-level `export default <expr>`) become `record.result`.
+The journaled `kind: "script"` record is readable by `status`, updates while the script is running, and includes
+the dynamic worker records spawned by `agent`, `spawnWorker`, `loopUntilDry`, and `adversarialVerify`. See
+`examples/parallel-reduce.workflow.js` and
 `examples/budget-loop.workflow.js`, and `cookbook.md` for the composed patterns.
 
 ## Warm-context executor & transport (opt-in)

@@ -103,8 +103,9 @@ A step may only reference ids listed in its own `depends_on` (compile-time enfor
 throws rather than emitting a blank. Per-kind fields: `verify` adds `findings_from` / `findings_path` (default
 `findings`) / `skeptics` (default 3) / `lenses` / `context`; `loop` adds `dry_rounds` (default 2) / `max_rounds`
 (default 10) and exposes `{{round}}`; `parallel` adds `fanout` (int) **or** `items` (array, each exposed as
-`{{item.<key>}}`). The result record is the same journaled shape as `run`, so CLI `status` and `resume` read it
-unchanged (with each worker entry carrying `step_id` / `kind` / `depends_on`).
+`{{item.<key>}}`). Pipeline records include a top-level `steps[]` array of step-oriented records and keep
+`workers[]` as the same journaled list for existing `status` / `resume` readers. Completed worker/step records
+carry both `result` and `value` aliases for their output.
 
 > Pipeline resume is **partial** (same caveat as CLI `resume`): a re-run leaf replays its already-rendered
 > prompt faithfully, but re-running an upstream step does **not** re-render or cascade to downstream dependents.
@@ -193,13 +194,13 @@ ordinary code with `await`, `map`/`filter`/`sort`, and arbitrary host-side reduc
 | Binding | Behavior |
 | --- | --- |
 | `agent(prompt, opts?)` | spawns one worker and returns its `value` on completion, else `null` (the failure is already logged). The ergonomic happy-path primitive. |
-| `spawnWorker(prompt, opts?)` | the raw engine call returning the full `{status, value, usage, thread_id, ...}` record (advanced). |
+| `spawnWorker(prompt, opts?)` | the raw engine call returning the full `{status, value, result, usage, thread_id, ...}` record (advanced). |
 | `parallel(thunks)` | barrier gather; a throwing thunk degrades to `null`. |
 | `pipeline(items, ...stages)` | **variadic** — each stage is a positional argument and receives `(prev, item, index, ctx)`; barrier-free streaming. |
 | `loopUntilDry(makePrompt, opts?)` | keep spawning finders until K dry rounds / budget / lifetime cap. |
 | `adversarialVerify(findings, opts?)` | keep only findings that survive a majority refute vote. |
 | `log(message, data?)` | narrator line into `events[]`. |
-| `phase(title)` | sets a closure-tracked phase used as the default `phase` for subsequent `agent()`/`spawnWorker()`. |
+| `phase(title)` | sets a closure-tracked phase used as the default `phase` for subsequent worker-spawning primitives. |
 | `workflow(pathOrSource, args?)` | one-level **nested** `runScript`, guarded by `ULTRACODE_DEPTH`; beyond depth 1 it throws `nested script workflows beyond depth 1 are not supported`. |
 | `budget` | `{ total, spent(), remaining() }`. |
 | `args` | the `input.args` object. |
@@ -207,9 +208,10 @@ ordinary code with `await`, `map`/`filter`/`sort`, and arbitrary host-side reduc
 | `WORKER_SCHEMA` / `VERDICT_SCHEMA` | the engine schemas. |
 
 A script may use top-level `await` and a top-level `return` (the returned value becomes `record.result`). ES
-module sugar is tolerated by a small source transform: `export default <expr>` becomes the captured return value,
-and a leading `export const|let|var|async|function|class` is stripped to the bare declaration (so a
-`.workflow.js` file is editor-friendly). A `"use strict";` prelude is prepended as hygiene (an undeclared
+module sugar is tolerated by a small source transform: only top-level `export default <expr>` becomes the captured
+return value, and a leading top-level `export const|let|var|async|function|class` is stripped to the bare
+declaration (so a `.workflow.js` file is editor-friendly). Nested workflow source strings keep their own
+`export default` for the nested runner. A `"use strict";` prelude is prepended as hygiene (an undeclared
 assignment throws instead of leaking a host global). **Note:** because the body is wrapped in an `AsyncFunction`,
 a journaled `error` line/position is offset from the original file — the message is still accurate but line
 numbers will not match the source.
@@ -222,7 +224,9 @@ numbers will not match the source.
   "options": { "concurrency": 4, "budget_tokens": null, "max_agents": 1000, "launch_stagger_ms": 25,
                "max_retries": null, "base_delay_ms": null, "max_delay_ms": null, "retry_jitter": null },
   "state_path": "$CODEX_HOME/ultracode/runs/ultra-....json",
-  "workers": [],            // always [] — a script record is not step-resumable
+  "workers": [              // dynamic workers spawned by agent/helper primitives
+    { "id": "worker-1", "status": "completed", "phase": "inspect", "result": {}, "value": {} }
+  ],
   "result": { /* the script's return value */ },
   "events": [ /* narrator log */ ],
   "aggregate_usage": { /* cross-worker token totals */ },
@@ -391,8 +395,10 @@ reduce pass) and `budget-loop.workflow.js` (a `budget`-bounded `loopUntilDry` th
 
 ## State
 
-Runs are journaled to `$CODEX_HOME/ultracode/runs/<id>.json`, rewritten incrementally as workers settle (so
-CLI `status` reflects progress) and carrying `workers[]`, `events[]`, `aggregate`, and `aggregate_usage`.
+Runs are journaled to `$CODEX_HOME/ultracode/runs/<id>.json`, rewritten incrementally as events arrive and workers
+settle (so CLI `status` reflects progress), and carrying `workers[]`, `events[]`, `aggregate`, and
+`aggregate_usage`. Pipeline records also expose `steps[]`; script records are not step-resumable but still journal
+their dynamic workers.
 New fields are additive; existing readers are unaffected.
 
 ## Backward compatibility
@@ -414,4 +420,5 @@ defaults to the cold ephemeral fan-out and falls back to it on any resume failur
 The CLI `script` command is additive: the engine only gains a single lazy `runScript` re-export (call-time
 `require`, no require cycle), so existing engine exports are unchanged. Script records (`kind: "script"`) journal
 into the same `$CODEX_HOME/ultracode/runs/` directory and
-are read by `status` unchanged; `resume` returns a clean no-op message for them (they carry `workers: []`).
+are read by `status` unchanged; `resume` returns a clean no-op message for them because the imperative body is not
+step-resumable.

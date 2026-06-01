@@ -54,6 +54,46 @@ function scriptId() {
   return `ultra-${stamp}-${crypto.randomBytes(3).toString("hex")}`;
 }
 
+function makeScriptPersister(record, ctx) {
+  let chain = Promise.resolve();
+  return {
+    schedule() {
+      const snapshot = JSON.parse(JSON.stringify(record));
+      chain = chain
+        .then(() => writeJson(record.state_path, snapshot))
+        .catch((error) => {
+          engine.log(ctx, `Failed to persist script workflow state: ${error.message}`, { reason: "persist-error" });
+          process.stderr.write(`[ultracode] script state persist error: ${error.message}\n`);
+        });
+      return chain;
+    },
+    flush() {
+      return chain;
+    }
+  };
+}
+
+function scriptPendingWorkerRecord(meta, fallbackIndex) {
+  const index = meta && Number.isInteger(meta.index) ? meta.index : fallbackIndex;
+  const id = meta && meta.id ? meta.id : `worker-${index + 1}`;
+  const label = (meta && meta.label) || id;
+  return {
+    index,
+    id,
+    step_id: (meta && meta.step_id) || id,
+    title: (meta && meta.title) || label,
+    label,
+    phase: (meta && meta.phase) || null,
+    status: "pending",
+    ...(meta && meta.spec ? { spec: meta.spec } : {})
+  };
+}
+
+function scriptWorkerRecordFromResult(meta, result, fallbackIndex) {
+  const base = scriptPendingWorkerRecord(meta, fallbackIndex);
+  return engine.workerRecordFromResult(base, result);
+}
+
 // ---------------------------------------------------------------------------
 // Source transform.
 //
@@ -102,7 +142,7 @@ const SCOPE_PARAMS = [
 // ---------------------------------------------------------------------------
 // Bound script scope. ctx is auto-injected into every primitive so the user
 // never has to thread it. `currentPhase` is closure-tracked and used as the
-// default phase for agent()/spawnWorker().
+// default phase for worker-spawning primitives.
 // ---------------------------------------------------------------------------
 
 function buildScope(ctx, input) {
@@ -153,11 +193,11 @@ function buildScope(ctx, input) {
   }
 
   function loopUntilDry(makePrompt, opts = {}) {
-    return engine.loopUntilDry(makePrompt, { ...spawnDefaults, ...opts, ctx });
+    return engine.loopUntilDry(makePrompt, { ...spawnDefaults, phase: currentPhase, ...opts, ctx });
   }
 
   function adversarialVerify(findings, opts = {}) {
-    return engine.adversarialVerify(findings, { ...spawnDefaults, ...opts, ctx });
+    return engine.adversarialVerify(findings, { ...spawnDefaults, phase: currentPhase, ...opts, ctx });
   }
 
   // log(message, data?) routes through the engine's narrator so script lines
@@ -255,21 +295,56 @@ async function runScript(input = {}) {
   const source = hasSource ? input.source : await fs.readFile(path.resolve(input.path), "utf8");
 
   const id = scriptId();
-  const ctx = engine.createContext({
+  let record = null;
+  let persister = null;
+  let ctx = null;
+  const workersById = new Map();
+  const schedulePersist = () => {
+    if (!record || !persister || !ctx) return;
+    record.events = ctx.events;
+    record.aggregate_usage = ctx.usageTotals;
+    persister.schedule();
+  };
+  ctx = engine.createContext({
     workflowId: id,
     concurrency: input.concurrency,
     budgetTokens: input.budget_tokens,
     maxAgents: input.max_agents,
     launchStaggerMs: input.launch_stagger_ms,
     depth: Number(process.env.ULTRACODE_DEPTH || 0),
-    onEvent: typeof input.on_event === "function" ? input.on_event : null,
+    onEvent:
+      typeof input.on_event === "function"
+        ? (event) => {
+            try {
+              input.on_event(event);
+            } finally {
+              schedulePersist();
+            }
+          }
+        : () => schedulePersist(),
+    onWorkerPending: (meta) => {
+      if (!record || !meta) return;
+      const pending = scriptPendingWorkerRecord(meta, record.workers.length);
+      workersById.set(pending.id, pending.index);
+      record.workers[pending.index] = pending;
+      schedulePersist();
+    },
+    onWorkerRecord: (result, meta) => {
+      if (!record) return;
+      const index =
+        meta && meta.id && workersById.has(meta.id) ? workersById.get(meta.id) : record.workers.length;
+      const updated = scriptWorkerRecordFromResult(meta, result, index);
+      workersById.set(updated.id, index);
+      record.workers[index] = updated;
+      schedulePersist();
+    },
     signal: input.signal
   });
 
   const startedAt = new Date().toISOString();
   const statePath = engine.statePathFor(id);
 
-  const record = {
+  record = {
     id,
     kind: "script",
     status: "running",
@@ -288,9 +363,8 @@ async function runScript(input = {}) {
       retry_jitter: input.retry_jitter === undefined ? null : input.retry_jitter
     },
     state_path: statePath,
-    // A script record is NOT step-resumable. Set workers:[] explicitly so
-    // engine.resumeWorkflow degrades to a clean "nothing to resume" (it iterates
-    // record.workers) and engine.readWorkflow / the status tool still read it.
+    // Script records are not step-resumable, but they do journal the dynamic
+    // workers they spawned so status can show live progress and post-run details.
     workers: [],
     result: null,
     events: ctx.events,
@@ -300,6 +374,7 @@ async function runScript(input = {}) {
   // Persist a "running" snapshot up-front so an interrupted run still leaves a
   // readable record (mirrors runWorkflow).
   await writeJson(statePath, record);
+  persister = makeScriptPersister(record, ctx);
 
   const scope = buildScope(ctx, { ...input, cwd });
 
@@ -371,7 +446,8 @@ async function runScript(input = {}) {
   // script return value) still journals a useful failure instead of throwing
   // out of runScript.
   try {
-    await writeJson(statePath, record);
+    persister.schedule();
+    await persister.flush();
   } catch (writeError) {
     record.status = "failed";
     record.result = null;

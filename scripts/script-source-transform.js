@@ -26,6 +26,7 @@ function findExportRewrites(source) {
   const rewrites = [];
   let state = "code";
   let escaped = false;
+  let braceDepth = 0;
 
   for (let i = 0; i < source.length; i += 1) {
     const ch = source[i];
@@ -86,7 +87,16 @@ function findExportRewrites(source) {
       continue;
     }
 
-    if (isLinePrefixWhitespace(source, i) && startsKeyword(source, i, "export")) {
+    if (ch === "{") {
+      braceDepth += 1;
+      continue;
+    }
+    if (ch === "}") {
+      braceDepth = Math.max(0, braceDepth - 1);
+      continue;
+    }
+
+    if (braceDepth === 0 && isLinePrefixWhitespace(source, i) && startsKeyword(source, i, "export")) {
       const rewrite = exportRewriteAt(source, i);
       if (rewrite) {
         rewrites.push(rewrite);

@@ -402,6 +402,9 @@ function createContext(opts = {}) {
     depth: Number.isFinite(opts.depth) ? opts.depth : 0,
     maxDepth: Number.isFinite(opts.maxDepth) ? opts.maxDepth : MAX_NESTING_DEPTH,
     onEvent: typeof opts.onEvent === "function" ? opts.onEvent : null,
+    onWorkerPending: typeof opts.onWorkerPending === "function" ? opts.onWorkerPending : null,
+    onWorkerRecord: typeof opts.onWorkerRecord === "function" ? opts.onWorkerRecord : null,
+    nextWorkerIndex: 0,
     signal: controller.signal,
     budget: {
       total: budgetTotal,
@@ -648,6 +651,43 @@ async function waitForLaunchStagger(ctx, label, phase) {
   if (delayMs <= 0) return;
   emitEvent(ctx, { type: "worker.launch_stagger", label, phase, delay_ms: delayMs });
   await abortableDelay(delayMs, ctx ? ctx.signal : undefined);
+}
+
+function notifyCtxWorkerHook(ctx, hookName, ...args) {
+  if (!ctx || typeof ctx[hookName] !== "function") return;
+  try {
+    ctx[hookName](...args);
+  } catch {
+    /* worker progress hooks must never break worker execution */
+  }
+}
+
+function createWorkerMeta(ctx, prompt, opts) {
+  if (!ctx) return null;
+  const index = ctx.nextWorkerIndex;
+  ctx.nextWorkerIndex += 1;
+  const id = `worker-${index + 1}`;
+  return {
+    index,
+    id,
+    step_id: id,
+    title: opts.label,
+    label: opts.label,
+    phase: opts.phase || null,
+    prompt,
+    spec: {
+      prompt,
+      schema: opts.schema === undefined ? null : opts.schema,
+      sandbox: opts.sandbox,
+      model: opts.model || null,
+      reasoning_effort: opts.reasoningEffort || null,
+      timeout_ms: opts.timeoutMs,
+      cwd: opts.cwd,
+      isolation: opts.isolation || null,
+      executor: opts.executor || "cold",
+      transport: opts.transport || "exec"
+    }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1167,6 +1207,7 @@ function failedWorker(label, phase, error, codexExec, usage, durationMs, status)
   return {
     status: status || "failed",
     value: null,
+    result: null,
     usage: usage || null,
     thread_id: null,
     duration_ms: durationMs || 0,
@@ -1192,19 +1233,31 @@ function cancelledWorker(label, phase, reason) {
 async function spawnWorker(prompt, opts = {}) {
   const ctx = opts.ctx || null;
   const resolved = resolveWorkerOpts({ ...opts, depth: ctx ? ctx.depth : 0 });
+  const workerMeta = createWorkerMeta(ctx, prompt, resolved);
+  const resolvedWithMeta = workerMeta
+    ? { ...resolved, worker_id: workerMeta.id, worker_index: workerMeta.index }
+    : resolved;
   // resumeSessionId is only honored when the caller opted into executor:'resume'.
   // For any other executor (cold/fork) it is forced null so the cold path runs
   // byte-for-byte as before — the warm path is purely additive and opt-in.
   const resumeSessionId =
-    resolved.executor === "resume" && typeof opts.resumeSessionId === "string" && opts.resumeSessionId
+    resolvedWithMeta.executor === "resume" && typeof opts.resumeSessionId === "string" && opts.resumeSessionId
       ? opts.resumeSessionId
       : null;
-  const exec = () => spawnWorkerGuarded(prompt, resolved, ctx, resumeSessionId);
-  return ctx ? ctx.limiter.run(exec) : exec();
+  notifyCtxWorkerHook(ctx, "onWorkerPending", workerMeta);
+  const exec = () => spawnWorkerGuarded(prompt, resolvedWithMeta, ctx, resumeSessionId);
+  const result = await (ctx ? ctx.limiter.run(exec) : exec());
+  notifyCtxWorkerHook(ctx, "onWorkerRecord", result, workerMeta);
+  return result;
 }
 
 async function spawnWorkerGuarded(prompt, opts, ctx, resumeSessionId = null) {
-  const { label, phase } = opts;
+  const { label, phase, worker_id: workerId, worker_index: workerIndex } = opts;
+  const workerEvent = (event) => ({
+    ...event,
+    ...(workerId ? { worker_id: workerId } : {}),
+    ...(workerIndex !== undefined && workerIndex !== null ? { worker_index: workerIndex } : {})
+  });
 
   // Re-evaluated before every spawn (including schema retries) so neither the
   // token budget nor the lifetime agent cap can be overshot by retries.
@@ -1260,7 +1313,7 @@ async function spawnWorkerGuarded(prompt, opts, ctx, resumeSessionId = null) {
     }
   }
 
-  emitEvent(ctx, { type: "worker.started", label, phase });
+  emitEvent(ctx, workerEvent({ type: "worker.started", label, phase }));
 
   // fork executor stub: the spike proved `codex fork` is interactive-TUI-only
   // (no --json, no `codex exec fork`), so it cannot share a warm base session
@@ -1299,7 +1352,7 @@ async function spawnWorkerGuarded(prompt, opts, ctx, resumeSessionId = null) {
       try {
         await waitForLaunchStagger(ctx, label, phase);
       } catch {
-        emitEvent(ctx, { type: "worker.cancelled", label, phase });
+        emitEvent(ctx, workerEvent({ type: "worker.cancelled", label, phase }));
         log(ctx, `Worker "${label}" cancelled during launch stagger.`, { label, reason: "cancelled" });
         return cancelledWorker(label, phase, "cancelled");
       }
@@ -1325,13 +1378,13 @@ async function spawnWorkerGuarded(prompt, opts, ctx, resumeSessionId = null) {
                 label,
                 reason: "transport-fallback"
               });
-              emitEvent(ctx, { type: "worker.transport_fallback", label, phase, error: error.message });
+              emitEvent(ctx, workerEvent({ type: "worker.transport_fallback", label, phase, error: error.message }));
             }
           },
           resumeSessionId: activeResume,
           onStreamEvent: (event) => {
             if (event.type === "turn.completed" && event.usage) {
-              emitEvent(ctx, { type: "turn.completed", label, phase });
+              emitEvent(ctx, workerEvent({ type: "turn.completed", label, phase }));
             }
           }
         });
@@ -1348,7 +1401,7 @@ async function spawnWorkerGuarded(prompt, opts, ctx, resumeSessionId = null) {
         // run faster/cheaper, never change its correctness.
         if (activeResume && !(ctx && ctx.signal && ctx.signal.aborted) && isResumeUnavailable(error, execResult)) {
           log(ctx, "resume unavailable; fell back to cold exec", { label, reason: "resume-fallback" });
-          emitEvent(ctx, { type: "worker.resume_fallback", label, phase });
+          emitEvent(ctx, workerEvent({ type: "worker.resume_fallback", label, phase }));
           activeResume = null;
           currentPrompt = buildPrompt();
           continue;
@@ -1359,7 +1412,7 @@ async function spawnWorkerGuarded(prompt, opts, ctx, resumeSessionId = null) {
         const aborted = (error && error.cancelled === true) || (execResult && execResult.cancelled === true) ||
           (ctx && ctx.signal && ctx.signal.aborted);
         if (aborted) {
-          emitEvent(ctx, { type: "worker.cancelled", label, phase });
+          emitEvent(ctx, workerEvent({ type: "worker.cancelled", label, phase }));
           log(ctx, `Worker "${label}" cancelled.`, { label, reason: "cancelled" });
           return cancelledWorker(label, phase, "cancelled");
         }
@@ -1377,7 +1430,7 @@ async function spawnWorkerGuarded(prompt, opts, ctx, resumeSessionId = null) {
         if (canRetry) {
           const backoffMs = backoffDelay(transientAttempt, opts.baseDelayMs, opts.maxDelayMs, opts.retryJitter);
           transientAttempt += 1;
-          emitEvent(ctx, {
+          emitEvent(ctx, workerEvent({
             type: "worker.retry",
             label,
             phase,
@@ -1385,7 +1438,7 @@ async function spawnWorkerGuarded(prompt, opts, ctx, resumeSessionId = null) {
             max_retries: effectiveMaxRetries,
             reason: classification.reason,
             delay_ms: backoffMs
-          });
+          }));
           log(
             ctx,
             `Worker "${label}" transient failure (${classification.reason}); retry ${transientAttempt}/${effectiveMaxRetries} in ${backoffMs}ms.`,
@@ -1395,14 +1448,14 @@ async function spawnWorkerGuarded(prompt, opts, ctx, resumeSessionId = null) {
             await abortableDelay(backoffMs, ctx ? ctx.signal : undefined);
           } catch {
             // Aborted during backoff: stop retrying, report cancelled.
-            emitEvent(ctx, { type: "worker.cancelled", label, phase });
+            emitEvent(ctx, workerEvent({ type: "worker.cancelled", label, phase }));
             log(ctx, `Worker "${label}" cancelled during retry backoff.`, { label, reason: "cancelled" });
             return cancelledWorker(label, phase, "cancelled");
           }
           continue;
         }
 
-        emitEvent(ctx, { type: "worker.failed", label, phase, error: error.message });
+        emitEvent(ctx, workerEvent({ type: "worker.failed", label, phase, error: error.message }));
         log(ctx, `Worker "${label}" failed: ${error.message}`, { label, reason: "exec-error" });
         return failedWorker(label, phase, error.message, execResult, usage, execResult ? execResult.duration_ms : 0);
       }
@@ -1443,15 +1496,18 @@ async function spawnWorkerGuarded(prompt, opts, ctx, resumeSessionId = null) {
       if (worktree) {
         diff = await collectDiff(worktree).catch(() => null);
       }
-      emitEvent(ctx, { type: "worker.completed", label, phase, schema_valid: schemaValid });
+      emitEvent(ctx, workerEvent({ type: "worker.completed", label, phase, schema_valid: schemaValid }));
       return {
         status: "completed",
         value,
+        result: value,
         usage,
         thread_id: execResult.thread_id || null,
         duration_ms: execResult.duration_ms,
         label,
         phase,
+        ...(workerId ? { worker_id: workerId } : {}),
+        ...(workerIndex !== undefined && workerIndex !== null ? { worker_index: workerIndex } : {}),
         schema_valid: schemaValid,
         ...(worktree ? { worktree: worktree.dir, diff } : {})
       };
@@ -1637,9 +1693,18 @@ async function loopUntilDry(makePrompt, opts = {}) {
       sandbox: opts.sandbox,
       model: opts.model,
       reasoningEffort: opts.reasoningEffort,
+      timeoutMs: opts.timeoutMs || opts.timeout_ms,
       cwd: opts.cwd,
+      codex_bin: opts.codex_bin,
+      codex_home: opts.codex_home,
+      transport: opts.transport,
+      transport_strict: opts.transport_strict,
       label: `finder-round-${round + 1}`,
-      phase: opts.phase
+      phase: opts.phase,
+      maxRetries: firstDefined(opts.maxRetries, opts.max_retries),
+      baseDelayMs: firstDefined(opts.baseDelayMs, opts.base_delay_ms),
+      maxDelayMs: firstDefined(opts.maxDelayMs, opts.max_delay_ms),
+      retryJitter: firstDefined(opts.retryJitter, opts.retry_jitter)
     });
     round += 1;
     if (result.status !== "completed" || isDry(result.value)) {
@@ -1688,9 +1753,18 @@ async function adversarialVerify(findings, opts = {}) {
             sandbox: opts.sandbox || "read-only",
             model: opts.model,
             reasoningEffort: opts.reasoningEffort,
+            timeoutMs: opts.timeoutMs || opts.timeout_ms,
             cwd: opts.cwd,
+            codex_bin: opts.codex_bin,
+            codex_home: opts.codex_home,
+            transport: opts.transport,
+            transport_strict: opts.transport_strict,
             label: `skeptic${lens ? `:${lens}` : ""}`,
-            phase: opts.phase
+            phase: opts.phase,
+            maxRetries: firstDefined(opts.maxRetries, opts.max_retries),
+            baseDelayMs: firstDefined(opts.baseDelayMs, opts.base_delay_ms),
+            maxDelayMs: firstDefined(opts.maxDelayMs, opts.max_delay_ms),
+            retryJitter: firstDefined(opts.retryJitter, opts.retry_jitter)
           }).then((result) => (result.status === "completed" ? result.value : null));
         })
       );
@@ -1720,6 +1794,7 @@ function workerRecordFromResult(base, result) {
       ...base,
       status: "completed",
       result: result.value,
+      value: result.value,
       usage: result.usage,
       duration_ms: result.duration_ms,
       ...(result.schema_valid === false ? { schema_valid: false } : {}),
@@ -1731,12 +1806,16 @@ function workerRecordFromResult(base, result) {
     return {
       ...base,
       status: "cancelled",
+      result: null,
+      value: null,
       error: result.error || "cancelled"
     };
   }
   return {
     ...base,
     status: "failed",
+    result: null,
+    value: null,
     error: result.error,
     ...(result.codex_exec ? { codex_exec: result.codex_exec } : {})
   };
@@ -2466,9 +2545,6 @@ async function executeStep(step, results, ctx, codexBin, codexHomeValue, retryWo
     codex_home: codexHomeValue,
     phase: step.phase,
     // Opt-in transport cascades from the pipeline level to every step's worker.
-    // verify/loop spawn through adversarialVerify/loopUntilDry which don't thread
-    // transport, so those keep the default exec path — transport applies to
-    // worker/parallel steps (the ones spawning directly here).
     ...(transportOpts && transportOpts.transport && transportOpts.transport !== "exec"
       ? { transport: transportOpts.transport, transport_strict: transportOpts.transportStrict }
       : {}),
@@ -2523,7 +2599,14 @@ async function executeStep(step, results, ctx, codexBin, codexHomeValue, retryWo
       sandbox: step.sandbox,
       model: step.model,
       reasoningEffort: step.reasoning_effort,
+      timeoutMs: step.timeout_ms,
       cwd: step.cwd,
+      codex_bin: codexBin,
+      codex_home: codexHomeValue,
+      ...(transportOpts && transportOpts.transport && transportOpts.transport !== "exec"
+        ? { transport: transportOpts.transport, transport_strict: transportOpts.transportStrict }
+        : {}),
+      ...(retryWorker || {}),
       phase: step.phase
     });
     return { output: survivors, workerResults: [] };
@@ -2540,7 +2623,14 @@ async function executeStep(step, results, ctx, codexBin, codexHomeValue, retryWo
         sandbox: step.sandbox,
         model: step.model,
         reasoningEffort: step.reasoning_effort,
+        timeoutMs: step.timeout_ms,
         cwd: step.cwd,
+        codex_bin: codexBin,
+        codex_home: codexHomeValue,
+        ...(transportOpts && transportOpts.transport && transportOpts.transport !== "exec"
+          ? { transport: transportOpts.transport, transport_strict: transportOpts.transportStrict }
+          : {}),
+        ...(retryWorker || {}),
         phase: step.phase,
         label: step.label
       }
@@ -2571,6 +2661,7 @@ function stepRecordFromExecution(step, execution, durationMs) {
     phase: step.phase,
     status: allCancelled ? "cancelled" : allFailed ? "failed" : "completed",
     result: execution.output,
+    value: execution.output,
     usage,
     duration_ms: durationMs,
     ...(anyFailed && !allFailed ? { partial: true } : {}),
@@ -2600,6 +2691,8 @@ function stepFailureRecord(step, error) {
     label: step.label,
     phase: step.phase,
     status: "failed",
+    result: null,
+    value: null,
     error: error instanceof Error ? error.message : String(error)
   };
 }
@@ -2660,6 +2753,17 @@ async function runPipelineSpec(input = {}) {
   const transportStrict = resolveBool(firstDefined(input.transport_strict, input.transportStrict), false);
 
   const indexById = new Map(compiled.map((s, i) => [s.id, i]));
+  const stepRecords = compiled.map((step) => ({
+    index: step.index,
+    id: step.id,
+    step_id: step.id,
+    kind: step.kind,
+    depends_on: step.depends_on,
+    title: step.label,
+    label: step.label,
+    phase: step.phase,
+    status: "pending"
+  }));
   const workflow = {
     id,
     status: "running",
@@ -2683,17 +2787,8 @@ async function runPipelineSpec(input = {}) {
     },
     state_path: statePathFor(id),
     phases: Array.from(new Set(compiled.map((s) => s.phase).filter(Boolean))),
-    workers: compiled.map((step) => ({
-      index: step.index,
-      id: step.id,
-      step_id: step.id,
-      kind: step.kind,
-      depends_on: step.depends_on,
-      title: step.label,
-      label: step.label,
-      phase: step.phase,
-      status: "pending"
-    })),
+    steps: stepRecords,
+    workers: stepRecords,
     events: ctx.events,
     aggregate_usage: ctx.usageTotals
   };
@@ -2753,6 +2848,7 @@ module.exports = {
   runWorkflow,
   runPipelineSpec,
   resumeWorkflow,
+  workerRecordFromResult,
   // Convenience re-export of the opt-in script runner. This is a LAZY wrapper:
   // the runner top-level-requires this engine, so the engine must NOT top-level
   // require the runner (that would form a require cycle and hand the runner a

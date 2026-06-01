@@ -53,6 +53,23 @@ test("transform: nested workflow source keeps its export default for the nested 
   assert.strictEqual((out.match(/export default/g) || []).length, 1);
 });
 
+test("transform: only top-level export default is rewritten", () => {
+  const out = transformSource(
+    [
+      "function nestedSource() {",
+      "  return `export default { inner: true };`;",
+      "}",
+      "if (false) {",
+      "  export default { unreachable: true };",
+      "}",
+      "export default { outer: nestedSource() };"
+    ].join("\n")
+  );
+  assert.match(out, /return `export default \{ inner: true \};`;/);
+  assert.match(out, /\n  export default \{ unreachable: true \};/);
+  assert.match(out, /\nreturn \{ outer: nestedSource\(\) \};/);
+});
+
 test("runScript: top-level return is captured as result and top-level await works", async () => {
   const rec = await runScript({
     source: "const x = await Promise.resolve(41); return { answer: x + 1 };",
@@ -302,7 +319,9 @@ test("journaling: record shape + state file readable by readWorkflow (by id and 
     for (const k of ["id", "started_at", "completed_at", "duration_ms", "cwd", "options", "state_path", "result", "events", "aggregate_usage"]) {
       assert.ok(Object.prototype.hasOwnProperty.call(rec, k), `record has ${k}`);
     }
-    assert.deepStrictEqual(rec.workers, [], "workers:[] so resume degrades");
+    assert.strictEqual(rec.workers.length, 1, "script workers are journaled for status/detail");
+    assert.strictEqual(rec.workers[0].status, "completed");
+    assert.deepStrictEqual(rec.workers[0].value, rec.workers[0].result, "journaled worker has result/value aliases");
     // State file exists and parses.
     assert.ok(fs.existsSync(rec.state_path), "state file written");
     // Readable by id.
@@ -335,6 +354,79 @@ test("spawnWorker() returns the full record; phase() defaults the worker phase",
   assert.strictEqual(rec.status, "completed");
   assert.strictEqual(rec.result.status, "completed");
   assert.strictEqual(rec.result.hasUsage, true);
+  assert.strictEqual(rec.result.phase, "scan");
+  assert.strictEqual(rec.workers[0].phase, "scan");
+});
+
+test("helper primitives inherit phase and journal their worker records", async () => {
+  const rec = await runScript({
+    source: [
+      "phase('verify');",
+      "await adversarialVerify(['finding-a'], { skeptics: 2, schema: null });",
+      "phase('discover');",
+      "await loopUntilDry((round) => 'find round ' + round, { maxRounds: 1, dryRounds: 1 });",
+      "return { workerCount: ctx.spawnedCount };"
+    ].join("\n"),
+    concurrency: 3,
+    ...baseOpts()
+  });
+  assert.strictEqual(rec.status, "completed");
+  assert.strictEqual(rec.workers.length, 3, "two skeptics + one finder were persisted");
+  assert.strictEqual(rec.workers.filter((w) => w.label === "skeptic").length, 2);
+  assert.ok(rec.workers.filter((w) => w.label === "skeptic").every((w) => w.phase === "verify"));
+  const finder = rec.workers.find((w) => w.label === "finder-round-1");
+  assert.ok(finder, "finder worker was journaled");
+  assert.strictEqual(finder.phase, "discover");
+});
+
+test("script status file updates with live events and pending workers mid-flight", async () => {
+  const home = freshTmpDir("ultracode-script-live-home-");
+  const prevHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = home;
+  try {
+    const run = require("./helpers/env.js").withMockEnv({ MOCK_CODEX_SLEEP_MS: "250" }, () =>
+      runScript({
+        source: "phase('slow'); const v = await agent('slow worker'); return { ok: !!v };",
+        codex_bin: MOCK,
+        codex_home: home,
+        cwd: home
+      })
+    );
+    let mid = null;
+    const runsDir = path.join(home, "ultracode", "runs");
+    for (let i = 0; i < 40; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      let files = [];
+      try {
+        files = fs.readdirSync(runsDir).filter((f) => f.endsWith(".json"));
+      } catch {
+        files = [];
+      }
+      for (const file of files) {
+        const parsed = JSON.parse(fs.readFileSync(path.join(runsDir, file), "utf8"));
+        if (
+          parsed.status === "running" &&
+          Array.isArray(parsed.workers) &&
+          parsed.workers.some((w) => w.status === "pending") &&
+          Array.isArray(parsed.events) &&
+          parsed.events.some((e) => e.type === "worker.started")
+        ) {
+          mid = parsed;
+          break;
+        }
+      }
+      if (mid) break;
+    }
+    assert.ok(mid, "running status file showed live worker/event progress");
+    assert.strictEqual(mid.workers[0].phase, "slow");
+    const final = await run;
+    assert.strictEqual(final.status, "completed");
+    assert.strictEqual(final.workers[0].status, "completed");
+  } finally {
+    if (prevHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = prevHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("path mode: runs the echo fixture and passes args into the script scope", async () => {

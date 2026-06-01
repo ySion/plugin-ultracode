@@ -47,12 +47,17 @@ test("2-step worker->worker DAG: dependent receives upstream output, record shap
     assert.strictEqual(wf.status, "completed");
     assert.strictEqual(wf.options.pipeline, true);
     assert.strictEqual(wf.workers.length, 2);
+    assert.ok(Array.isArray(wf.steps), "pipeline exposes top-level steps[]");
+    assert.strictEqual(wf.steps.length, 2);
 
     // workers[] entries carry step_id / kind / depends_on for resume + status.
     const review = wf.workers.find((w) => w.id === "review");
     const plan = wf.workers.find((w) => w.id === "plan");
+    const reviewStep = wf.steps.find((s) => s.id === "review");
     assert.strictEqual(review.step_id, "review");
     assert.strictEqual(review.kind, "worker");
+    assert.deepStrictEqual(reviewStep.result, review.result, "steps[] mirrors the step-oriented worker record");
+    assert.deepStrictEqual(review.value, review.result, "pipeline records expose both result and value");
     assert.deepStrictEqual(plan.depends_on, ["review"]);
     assert.ok(plan.spec && typeof plan.spec.prompt === "string");
 
@@ -65,6 +70,28 @@ test("2-step worker->worker DAG: dependent receives upstream output, record shap
     assert.strictEqual(reread.id, wf.id);
     assert.strictEqual(reread.options.pipeline, true);
     assert.strictEqual(reread.workers.length, 2);
+    assert.strictEqual(reread.steps.length, 2);
+  });
+});
+
+test("pipeline raw-text worker records expose result and value aliases", async () => {
+  await withCodexHome(async (home) => {
+    const wf = await withCodexCliPath(MOCK, async () =>
+      withMockEnv({ MOCK_CODEX_RESPONSE: "raw pipeline text" }, async () =>
+        runPipelineSpec({
+          cwd: home,
+          codex_bin: MOCK,
+          codex_home: home,
+          steps: [{ id: "raw", prompt: "raw please", schema: null }]
+        })
+      )
+    );
+
+    assert.strictEqual(wf.status, "completed");
+    const raw = wf.steps.find((s) => s.id === "raw");
+    assert.strictEqual(raw.result, "raw pipeline text");
+    assert.strictEqual(raw.value, "raw pipeline text");
+    assert.strictEqual(wf.workers[0].value, wf.workers[0].result);
   });
 });
 

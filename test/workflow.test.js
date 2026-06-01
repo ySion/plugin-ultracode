@@ -59,6 +59,7 @@ test("workers_spec: explicit path runs both specs (incl schema:null), stores spe
     assert.ok(wf.workers.every((w) => w.spec && typeof w.spec.prompt === "string"));
     const beta = wf.workers.find((w) => w.label === "beta");
     assert.strictEqual(beta.spec.schema, null, "schema:null preserved in stored spec");
+    assert.strictEqual(beta.value, beta.result, "raw-text workers expose both result and value");
   });
 });
 
