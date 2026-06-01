@@ -5,9 +5,9 @@ Ultracode, which surface, which pattern) lives in `../SKILL.md`; runnable end-to
 `cookbook.md`. Read this when you already know what you're building and need the exact flag or field.
 
 Run commands as `node scripts/ultracode-cli.js <command> [--flags]` from the plugin checkout, or use the
-absolute CLI path injected by the prompt hook when the plugin is installed from cache. Add `--progress` to
-stream events to stderr. `--workers-spec`, `--steps`, `--force-steps`, and `--args` take JSON; numeric flags
-are coerced; engine options map to kebab-case flags (`--budget-tokens`, `--max-retries`, `--reasoning-effort`,
+absolute `scripts/ultracode-cli.js` path inside the installed plugin cache. Add `--progress` to stream events
+to stderr. `--workers-spec`, `--steps`, `--force-steps`, and `--args` take JSON; numeric flags are coerced;
+engine options map to kebab-case flags (`--budget-tokens`, `--max-retries`, `--reasoning-effort`,
 `--transport`, `--executor`, …).
 
 ## Commands

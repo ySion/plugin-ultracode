@@ -1,4 +1,4 @@
-# Ultracode
+# <img src="assets/icon.png" width="32" height="32" alt="Ultracode icon"> Ultracode
 
 A Codex CLI plugin that fans out `codex exec` subprocess workers for deep code investigation, planning, and
 review — and brings the orchestration model of **Claude Code's Workflow tool** to Codex.
@@ -36,8 +36,6 @@ codex plugin add ultracode@just-every
 | `scripts/ultracode-script-runner.js` | Imperative [Workflow scripts](#workflow-scripts) runner (`runScript`): binds the engine primitives into a bound script scope. |
 | `scripts/app-server-client.js` | Dependency-free `codex app-server` JSON-RPC client for the opt-in `transport: 'app-server'` worker path (handshake, lenient bare-JSON-RPC framing, usage normalization). |
 | `scripts/ultracode-cli.js` | CLI over the same engine (`plan` / `run` / `pipeline` / `resume` / `status` / `script`). |
-| `scripts/run-node-tool.sh` | POSIX launcher that resolves Node and runs the prompt hook. |
-| `hooks/` | `UserPromptSubmit` hook that injects Ultracode guidance when a prompt mentions "ultracode". |
 | `skills/ultracode/SKILL.md` | Model-facing decision layer (when/scale/surface/patterns index). Always loaded. |
 | `skills/ultracode/references/` | On-demand depth pulled by the model: `quality-patterns.md`, `cookbook.md` (runnable skeletons), `cli.md` (full flag/API reference). |
 

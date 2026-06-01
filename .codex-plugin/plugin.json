@@ -44,6 +44,8 @@
       "Review this plan with Ultracode"
     ],
     "brandColor": "#2563EB",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/icon.png",
     "websiteURL": "https://github.com/just-every/plugin-ultracode"
   }
 }

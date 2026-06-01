@@ -15,7 +15,6 @@ Ultracode is a Codex CLI plugin that gives Codex a parallel worker orchestration
 - `scripts/ultracode-script-runner.js` is the imperative Workflow-script runner.
 - `scripts/app-server-client.js` is the dependency-free `codex app-server` JSON-RPC client for the opt-in `transport: 'app-server'` path.
 - `scripts/ultracode-cli.js` is the CLI wrapper over the same engine.
-- `hooks/` contains the prompt hook that injects Ultracode guidance when a prompt mentions Ultracode.
 - `skills/ultracode/SKILL.md` is the model-facing decision layer (always loaded); `skills/ultracode/references/` holds the on-demand depth it links to (`quality-patterns.md`, `cookbook.md`, `cli.md`). Keep `SKILL.md` slim and the references the single home for each topic — don't let depth leak back into `SKILL.md`.
 - `test/` holds the Node test suite and mock Codex fixtures.
 - `examples/` holds runnable Workflow scripts.
