@@ -34,8 +34,10 @@ codex plugin add ultracode@just-every
 | --- | --- |
 | `scripts/ultracode-engine.js` | Orchestration engine: worker spawning, primitives, usage/budget, journaled state. No npm deps. |
 | `scripts/ultracode-script-runner.js` | Imperative [Workflow scripts](#workflow-scripts) runner (`runScript`): binds the engine primitives into a bound script scope. |
+| `scripts/ultracode-ui-launcher.js` / `scripts/ultracode-ui-server.js` | Local dashboard launcher and dependency-free HTTP server over the persisted workflow journal. |
 | `scripts/app-server-client.js` | Dependency-free `codex app-server` JSON-RPC client for the opt-in `transport: 'app-server'` worker path (handshake, lenient bare-JSON-RPC framing, usage normalization). |
 | `scripts/ultracode-cli.js` | CLI over the same engine (`plan` / `run` / `pipeline` / `resume` / `status` / `script`). |
+| `ui/` | React dashboard assets served from the installed plugin cache; includes pinned browser React files so no runtime `npm install` is needed. |
 | `skills/ultracode/SKILL.md` | Model-facing decision layer (when/scale/surface/patterns index). Always loaded. |
 | `skills/ultracode/references/` | On-demand depth pulled by the model: `quality-patterns.md`, `cookbook.md` (runnable skeletons), `cli.md` (full flag/API reference). |
 
@@ -118,7 +120,8 @@ Two intentional behavioral differences from Claude's in-process Workflow tool:
   completes, so with concurrency _N_ up to _N_ in-flight workers (plus their schema retries) can finish after
   the budget is logically exhausted. Worst-case overspend is bounded by roughly `concurrency × per-worker cost`.
 - **No token streaming.** Worker tokens are not streamed live to the parent. The wins are CLI `--progress`,
-  accurate on-disk journaled status, and an events log the parent reads via CLI `status`.
+  accurate on-disk journaled status, the local dashboard launched for active runs, and an events log the parent
+  reads via CLI `status`.
 
 ## Usage
 
@@ -150,6 +153,32 @@ node scripts/ultracode-cli.js resume --workflow-id ultra-... --force-steps '["1"
 node scripts/ultracode-cli.js status --workflow-id ultra-...
 node scripts/ultracode-cli.js script <path> --args '{"files":["a.js"]}'   # imperative Workflow script (see below)
 ```
+
+### Run dashboard
+
+`run`, `pipeline`, `resume`, and `script` start a local dashboard server by default. The first running journal
+snapshot is written, then the dashboard URL is stored on `record.ui.url` and emitted as a `ui.ready` progress
+event:
+
+```bash
+node scripts/ultracode-cli.js run --task "..." --workers 4 --progress
+# [ultracode] ui.ready UI ready at http://127.0.0.1:<port>/workflow/ultra-...
+```
+
+The UI reads the same `$CODEX_HOME/ultracode/runs/<id>.json` records as `status`. It shows the workflow status,
+agent/step nodes, phases, dependency lines, last messages, events, prompts, errors, and output details. The
+server binds to `127.0.0.1`, reuses one process per `CODEX_HOME`, and exits after an idle timeout.
+
+Disable it with `--no-ui` or `ULTRACODE_UI=0`:
+
+```bash
+ULTRACODE_UI=0 node scripts/ultracode-cli.js pipeline --steps '[...]'
+node scripts/ultracode-cli.js script ./workflow.js --no-ui
+```
+
+Ultracode product code does not directly control the Codex in-app browser. It emits the dashboard URL through
+the journal/progress path; a parent Codex thread with the Browser plugin available should open that URL in the
+in-app browser at the start of the session.
 
 ### Scripted orchestration
 

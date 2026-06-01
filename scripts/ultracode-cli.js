@@ -16,9 +16,22 @@ const NUMERIC_KEYS = new Set([
   "launch_stagger_ms",
   "max_retries",
   "base_delay_ms",
-  "max_delay_ms"
+  "max_delay_ms",
+  "ui_port"
 ]);
 const JSON_KEYS = new Set(["workers_spec", "force_steps", "steps", "args"]);
+const BOOLEAN_KEYS = new Set(["ui", "retry_jitter", "transport_strict"]);
+const UI_COMMANDS = new Set(["run", "pipeline", "resume", "script"]);
+
+function parseBool(value) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  const normalized = String(value).trim().toLowerCase();
+  if (["0", "false", "no", "off", "disabled"].includes(normalized)) return false;
+  if (["1", "true", "yes", "on", "enabled", ""].includes(normalized)) return true;
+  return true;
+}
 
 function parseArgs(argv) {
   const [command = "plan", ...rest] = argv;
@@ -48,7 +61,7 @@ function parseArgs(argv) {
   return { command, options };
 }
 
-function coerce(options) {
+function coerce(options, command) {
   for (const key of NUMERIC_KEYS) {
     if (typeof options[key] === "string") {
       const number = Number(options[key]);
@@ -63,6 +76,19 @@ function coerce(options) {
         throw new Error(`--${key} must be valid JSON: ${error.message}`);
       }
     }
+  }
+  if (options.no_ui) {
+    options.ui = false;
+    delete options.no_ui;
+  }
+  for (const key of BOOLEAN_KEYS) {
+    if (key in options) {
+      options[key] = parseBool(options[key]);
+    }
+  }
+  if (UI_COMMANDS.has(command) && options.ui === undefined) {
+    const env = parseBool(process.env.ULTRACODE_UI);
+    options.ui = env === undefined ? true : env;
   }
   if (options.progress) {
     options.on_event = (event) => {
@@ -105,7 +131,7 @@ async function runCancellable(fn, options) {
 
 async function main() {
   const { command, options } = parseArgs(process.argv.slice(2));
-  coerce(options);
+  coerce(options, command);
   let result;
   if (command === "plan") {
     result = engine.planWorkflow(options);

@@ -1,0 +1,243 @@
+#!/usr/bin/env node
+"use strict";
+
+const fs = require("fs/promises");
+const http = require("http");
+const path = require("path");
+
+const STATIC_DIR = path.join(__dirname, "..", "ui");
+const MIME = new Map([
+  [".html", "text/html; charset=utf-8"],
+  [".js", "text/javascript; charset=utf-8"],
+  [".css", "text/css; charset=utf-8"],
+  [".json", "application/json; charset=utf-8"],
+  [".svg", "image/svg+xml; charset=utf-8"],
+  [".png", "image/png"],
+  [".ico", "image/x-icon"]
+]);
+
+function requiredEnv(name) {
+  const value = process.env[name];
+  if (!value || !value.trim()) throw new Error(`${name} is required`);
+  return value.trim();
+}
+
+const runsDir = path.resolve(requiredEnv("ULTRACODE_UI_RUNS_DIR"));
+const metaPath = path.resolve(requiredEnv("ULTRACODE_UI_META_PATH"));
+const host = (process.env.ULTRACODE_UI_HOST || "127.0.0.1").trim();
+const port = Math.max(0, Math.floor(Number(process.env.ULTRACODE_UI_PORT || 0)));
+const idleTimeoutMs = Math.max(60_000, Math.floor(Number(process.env.ULTRACODE_UI_IDLE_TIMEOUT_MS || 30 * 60_000)));
+let lastRequestAt = Date.now();
+let serverUrl = null;
+
+function json(res, statusCode, body) {
+  const payload = `${JSON.stringify(body, null, 2)}\n`;
+  res.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  });
+  res.end(payload);
+}
+
+function text(res, statusCode, body) {
+  res.writeHead(statusCode, {
+    "content-type": "text/plain; charset=utf-8",
+    "cache-control": "no-store"
+  });
+  res.end(body);
+}
+
+function safeWorkflowId(id) {
+  return typeof id === "string" && /^[A-Za-z0-9_-]+$/.test(id) ? id : null;
+}
+
+async function readWorkflowFile(filePath) {
+  return JSON.parse(await fs.readFile(filePath, "utf8"));
+}
+
+async function workflowFiles() {
+  let entries;
+  try {
+    entries = await fs.readdir(runsDir, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+  const files = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => path.join(runsDir, entry.name));
+  const stats = await Promise.all(files.map(async (file) => ({ file, stat: await fs.stat(file) })));
+  stats.sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
+  return stats;
+}
+
+async function latestWorkflow() {
+  const files = await workflowFiles();
+  if (files.length === 0) return null;
+  return readWorkflowFile(files[0].file);
+}
+
+async function workflowById(id) {
+  const safe = safeWorkflowId(id);
+  if (!safe) return null;
+  try {
+    return await readWorkflowFile(path.join(runsDir, `${safe}.json`));
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function summarize(record, stat) {
+  const workers = Array.isArray(record.workers) ? record.workers : [];
+  return {
+    id: record.id,
+    kind: record.kind || (record.options && record.options.pipeline ? "pipeline" : "run"),
+    status: record.status,
+    task: record.task || null,
+    cwd: record.cwd || null,
+    started_at: record.started_at || null,
+    completed_at: record.completed_at || null,
+    duration_ms: record.duration_ms || null,
+    workers: workers.length,
+    running: workers.filter((worker) => worker.status === "running").length,
+    pending: workers.filter((worker) => worker.status === "pending").length,
+    completed: workers.filter((worker) => worker.status === "completed").length,
+    failed: workers.filter((worker) => worker.status === "failed").length,
+    cancelled: workers.filter((worker) => worker.status === "cancelled").length,
+    updated_at: stat ? new Date(stat.mtimeMs).toISOString() : null
+  };
+}
+
+async function listWorkflows() {
+  const files = await workflowFiles();
+  const records = [];
+  for (const item of files.slice(0, 40)) {
+    try {
+      records.push(summarize(await readWorkflowFile(item.file), item.stat));
+    } catch {
+      records.push({ id: path.basename(item.file, ".json"), status: "unreadable" });
+    }
+  }
+  return records;
+}
+
+async function serveStatic(res, pathname) {
+  const requested = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+  const filePath = path.resolve(STATIC_DIR, requested);
+  if (!filePath.startsWith(`${STATIC_DIR}${path.sep}`) && filePath !== path.join(STATIC_DIR, "index.html")) {
+    text(res, 403, "Forbidden\n");
+    return;
+  }
+  let data;
+  try {
+    data = await fs.readFile(filePath);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      text(res, 404, "Not found\n");
+      return;
+    }
+    throw error;
+  }
+  const ext = path.extname(filePath);
+  res.writeHead(200, {
+    "content-type": MIME.get(ext) || "application/octet-stream",
+    "cache-control": ext === ".html" ? "no-store" : "no-cache"
+  });
+  res.end(data);
+}
+
+async function handle(req, res) {
+  lastRequestAt = Date.now();
+  const parsed = new URL(req.url || "/", serverUrl || `http://${host}:${port}`);
+  const pathname = parsed.pathname;
+
+  if (pathname === "/api/health") {
+    json(res, 200, { ok: true, pid: process.pid, runs_dir: runsDir, url: serverUrl });
+    return;
+  }
+  if (pathname === "/api/workflows") {
+    json(res, 200, { workflows: await listWorkflows() });
+    return;
+  }
+  if (pathname === "/api/workflows/latest") {
+    const record = await latestWorkflow();
+    if (!record) {
+      json(res, 404, { error: "No Ultracode workflow records found.", runs_dir: runsDir });
+      return;
+    }
+    json(res, 200, record);
+    return;
+  }
+  const workflowMatch = /^\/api\/workflows\/([^/]+)$/.exec(pathname);
+  if (workflowMatch) {
+    const record = await workflowById(decodeURIComponent(workflowMatch[1]));
+    if (!record) {
+      json(res, 404, { error: "Workflow record not found.", id: workflowMatch[1] });
+      return;
+    }
+    json(res, 200, record);
+    return;
+  }
+  if (pathname === "/" || pathname.startsWith("/workflow/")) {
+    await serveStatic(res, "/index.html");
+    return;
+  }
+  await serveStatic(res, pathname);
+}
+
+async function writeMetadata(url) {
+  const payload = {
+    pid: process.pid,
+    url,
+    host,
+    port: Number(new URL(url).port),
+    runs_dir: runsDir,
+    static_dir: STATIC_DIR,
+    started_at: new Date().toISOString()
+  };
+  await fs.mkdir(path.dirname(metaPath), { recursive: true });
+  const tmp = `${metaPath}.${process.pid}.tmp`;
+  await fs.writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  await fs.rename(tmp, metaPath);
+}
+
+async function removeMetadata() {
+  try {
+    const current = JSON.parse(await fs.readFile(metaPath, "utf8"));
+    if (current.pid === process.pid) await fs.rm(metaPath, { force: true });
+  } catch {
+    /* metadata cleanup is best-effort */
+  }
+}
+
+const server = http.createServer((req, res) => {
+  handle(req, res).catch((error) => {
+    json(res, 500, { error: error instanceof Error ? error.message : String(error) });
+  });
+});
+
+server.listen(port, host, async () => {
+  const address = server.address();
+  serverUrl = `http://${host}:${address.port}`;
+  try {
+    await writeMetadata(serverUrl);
+  } catch (error) {
+    process.stderr.write(`[ultracode-ui] failed to write metadata: ${error.message}\n`);
+    process.exit(1);
+  }
+});
+
+setInterval(() => {
+  if (Date.now() - lastRequestAt > idleTimeoutMs) {
+    server.close(() => {
+      removeMetadata().finally(() => process.exit(0));
+    });
+  }
+}, 30_000).unref();
+
+process.on("SIGTERM", () => {
+  server.close(() => {
+    removeMetadata().finally(() => process.exit(0));
+  });
+});

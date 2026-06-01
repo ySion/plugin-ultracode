@@ -58,6 +58,12 @@ Don't run a six-worker audit for a one-file question, and don't run three finder
   runs. For parallel writers, prefer `isolation: "worktree"` so their diffs don't collide.
 - Treat worker failures as **real failures**. A failed, timed-out, or refuted worker resolves to `null` / a
   `{status:"failed"}` record — filter it out; never substitute guessed output for it.
+- **Start and surface the dashboard first.** Leave the run UI enabled unless the user explicitly disables it.
+  `run`, `pipeline`, `resume`, and `script` emit a `ui.ready` event and store `record.ui.url` for the local
+  React dashboard. As soon as `ui.ready` appears, open that URL in the Codex in-app browser when an `iab` browser
+  is available. If the in-app browser is unavailable, immediately print the URL as a normal clickable Markdown
+  link or bare URL, never in a code block or inline code, so the user can open it while the run is active. If the
+  progress stream was not available, use the final `record.ui.url` the same way.
 - **Synthesize in the parent thread.** Read every result (including failures and low-confidence notes), merge
   duplicates, prefer concrete file/line evidence over generic advice, make the actual edits yourself so the
   meaningful implementation stays visible in the Codex app/TUI, then run normal verification after applying.

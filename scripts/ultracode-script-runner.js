@@ -30,6 +30,7 @@ const fs = require("fs/promises");
 const path = require("path");
 
 const { transformSource } = require("./script-source-transform");
+const { attachWorkflowUi, shouldLaunchUi } = require("./ultracode-ui-launcher");
 
 // Top-level require of the engine is intentional and safe: the engine must
 // NOT top-level require this runner (it uses a lazy require wrapper), so there
@@ -357,6 +358,7 @@ async function runScript(input = {}) {
       budget_tokens: ctx.budget.total,
       max_agents: ctx.maxAgents,
       launch_stagger_ms: ctx.launchStaggerMs,
+      ui: shouldLaunchUi(input),
       max_retries: input.max_retries === undefined ? null : input.max_retries,
       base_delay_ms: input.base_delay_ms === undefined ? null : input.base_delay_ms,
       max_delay_ms: input.max_delay_ms === undefined ? null : input.max_delay_ms,
@@ -375,6 +377,8 @@ async function runScript(input = {}) {
   // readable record (mirrors runWorkflow).
   await writeJson(statePath, record);
   persister = makeScriptPersister(record, ctx);
+  await attachWorkflowUi(record, ctx, input);
+  if (record.ui) schedulePersist();
 
   const scope = buildScope(ctx, { ...input, cwd });
 

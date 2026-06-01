@@ -12,7 +12,7 @@ const CLI = path.join(__dirname, "..", "scripts", "ultracode-cli.js");
 function runCli(args, env = {}) {
   return new Promise((resolve) => {
     const child = childProcess.spawn(process.execPath, [CLI, ...args], {
-      env: { ...process.env, ...env },
+      env: { ...process.env, ULTRACODE_UI: "0", ...env },
       stdio: ["ignore", "pipe", "pipe"]
     });
     let stdout = "";

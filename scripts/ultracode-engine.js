@@ -10,6 +10,7 @@ const path = require("path");
 const util = require("util");
 
 const appServerClient = require("./app-server-client");
+const { attachWorkflowUi, shouldLaunchUi } = require("./ultracode-ui-launcher");
 
 const execFileP = util.promisify(childProcess.execFile);
 
@@ -2032,6 +2033,7 @@ async function runExplicitWorkflow(input) {
       budget_tokens: ctx.budget.total,
       max_agents: ctx.maxAgents,
       launch_stagger_ms: ctx.launchStaggerMs,
+      ui: shouldLaunchUi(input),
       explicit: true,
       ...retryOpts.journal,
       ...transportJournal(transport, transportStrict)
@@ -2063,6 +2065,8 @@ async function runExplicitWorkflow(input) {
   };
   await writeJson(workflow.state_path, workflow);
   const persister = makePersister(workflow, ctx);
+  await attachWorkflowUi(workflow, ctx, input);
+  if (workflow.ui) persister.schedule();
 
   const results = await Promise.all(
     specs.map((spec, i) =>
@@ -2135,6 +2139,7 @@ async function runWorkflow(input = {}) {
       budget_tokens: ctx.budget.total,
       max_agents: ctx.maxAgents,
       launch_stagger_ms: ctx.launchStaggerMs,
+      ui: shouldLaunchUi(input),
       ...retryOpts.journal,
       ...transportJournal(options.transport, options.transport_strict)
     },
@@ -2150,6 +2155,8 @@ async function runWorkflow(input = {}) {
   };
   await writeJson(workflow.state_path, workflow);
   const persister = makePersister(workflow, ctx);
+  await attachWorkflowUi(workflow, ctx, input);
+  if (workflow.ui) persister.schedule();
 
   const results = await Promise.all(
     workflow.workers.map((worker, i) =>
@@ -2214,6 +2221,7 @@ async function resumeWorkflow(input = {}) {
   record.status = "running";
   record.completed_at = null;
   record.resumed_at = new Date().toISOString();
+  record.options = { ...(record.options || {}), ui: shouldLaunchUi(input) };
   record.events = ctx.events;
   if (rerun.length === 0) {
     log(ctx, "resume: all steps already completed; nothing to re-run.");
@@ -2222,6 +2230,8 @@ async function resumeWorkflow(input = {}) {
   }
   await writeJson(record.state_path, record);
   const persister = makePersister(record, ctx);
+  await attachWorkflowUi(record, ctx, input);
+  if (record.ui) persister.schedule();
 
   const baseOptions = normalizeOptions({
     task: record.task,
@@ -2781,6 +2791,7 @@ async function runPipelineSpec(input = {}) {
       budget_tokens: ctx.budget.total,
       max_agents: ctx.maxAgents,
       launch_stagger_ms: ctx.launchStaggerMs,
+      ui: shouldLaunchUi(input),
       pipeline: true,
       ...retryOpts.journal,
       ...transportJournal(transport, transportStrict)
@@ -2794,6 +2805,8 @@ async function runPipelineSpec(input = {}) {
   };
   await writeJson(workflow.state_path, workflow);
   const persister = makePersister(workflow, ctx);
+  await attachWorkflowUi(workflow, ctx, input);
+  if (workflow.ui) persister.schedule();
 
   // Barrier-free topological scheduling: stepPromise[id] resolves once the step
   // executes, and a step's body only starts after Promise.all(its deps). The

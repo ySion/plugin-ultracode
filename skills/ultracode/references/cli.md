@@ -21,6 +21,12 @@ engine options map to kebab-case flags (`--budget-tokens`, `--max-retries`, `--r
   cancelled run (first Ctrl-C) is recorded with status `cancelled`, distinct from `failed`/`partial`/`completed`.
 - `script`: run an imperative Workflow script (the Codex analogue of Claude Code's in-process Workflow tool).
 
+`run`, `pipeline`, `resume`, and `script` launch the local React dashboard by default. The dashboard URL is
+stored on `record.ui.url` and emitted as a `ui.ready` event. Disable it with `--no-ui` or `ULTRACODE_UI=0`.
+Optional UI flags: `--ui true|false`, `--ui-host <host>`, and `--ui-port <port>` (default host `127.0.0.1`,
+port `0`). The dashboard serves checked-in assets from the plugin cache and reads the same journal files as
+`status`; it does not require `npm install`.
+
 ## `run` arguments
 
 Default fixed-role fan-out:
