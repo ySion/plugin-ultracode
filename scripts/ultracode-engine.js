@@ -1926,6 +1926,56 @@ function makePersister(record, ctx) {
   };
 }
 
+function statusFromLifecycleEvent(event) {
+  if (!event || typeof event.type !== "string") return null;
+  if (event.type === "worker.started" || event.type === "step.started" || event.type === "turn.completed") return "running";
+  if (event.type === "worker.completed" || event.type === "step.completed") return event.status || "completed";
+  if (event.type === "worker.failed") return "failed";
+  if (event.type === "worker.cancelled") return "cancelled";
+  return null;
+}
+
+function eventMatchesRecordItem(event, item, index) {
+  if (!event || !item) return false;
+  const data = event.data || {};
+  const keys = new Set([item.id, item.step_id, item.label, item.title].filter(Boolean));
+  return (
+    event.worker_index === index ||
+    data.worker_index === index ||
+    keys.has(event.id) ||
+    keys.has(event.step_id) ||
+    keys.has(event.label) ||
+    keys.has(data.id) ||
+    keys.has(data.step_id) ||
+    keys.has(data.label)
+  );
+}
+
+function applyLifecycleEventToRecord(record, event) {
+  const nextStatus = statusFromLifecycleEvent(event);
+  if (!nextStatus || !record || typeof record !== "object") return;
+  const lists = [];
+  if (Array.isArray(record.workers)) lists.push(record.workers);
+  if (Array.isArray(record.steps) && record.steps !== record.workers) lists.push(record.steps);
+  for (const list of lists) {
+    list.forEach((item, index) => {
+      if (!eventMatchesRecordItem(event, item, index)) return;
+      if (nextStatus === "running" && item.status !== "pending") return;
+      item.status = nextStatus;
+    });
+  }
+}
+
+function attachLiveJournalPersistence(record, ctx, persister) {
+  if (!record || !ctx || !persister || !record.ui) return;
+  const upstream = ctx.onEvent;
+  ctx.onEvent = (event) => {
+    applyLifecycleEventToRecord(record, event);
+    persister.schedule();
+    if (upstream) upstream(event);
+  };
+}
+
 function finalizeRecord(workflow, ctx) {
   const completed = workflow.workers.filter((worker) => worker.status === "completed").length;
   const anyCancelled = workflow.workers.some((worker) => worker.status === "cancelled");
@@ -2082,7 +2132,10 @@ async function runExplicitWorkflow(input) {
   await writeJson(workflow.state_path, workflow);
   const persister = makePersister(workflow, ctx);
   await attachWorkflowUi(workflow, ctx, input);
-  if (workflow.ui) persister.schedule();
+  if (workflow.ui) {
+    persister.schedule();
+    attachLiveJournalPersistence(workflow, ctx, persister);
+  }
 
   const results = await Promise.all(
     specs.map((spec, i) =>
@@ -2177,7 +2230,10 @@ async function runWorkflow(input = {}) {
   await writeJson(workflow.state_path, workflow);
   const persister = makePersister(workflow, ctx);
   await attachWorkflowUi(workflow, ctx, input);
-  if (workflow.ui) persister.schedule();
+  if (workflow.ui) {
+    persister.schedule();
+    attachLiveJournalPersistence(workflow, ctx, persister);
+  }
 
   const results = await Promise.all(
     workflow.workers.map((worker, i) =>
@@ -2252,7 +2308,10 @@ async function resumeWorkflow(input = {}) {
   await writeJson(record.state_path, record);
   const persister = makePersister(record, ctx);
   await attachWorkflowUi(record, ctx, input);
-  if (record.ui) persister.schedule();
+  if (record.ui) {
+    persister.schedule();
+    attachLiveJournalPersistence(record, ctx, persister);
+  }
 
   const baseOptions = normalizeOptions({
     task: record.task,
@@ -2885,7 +2944,10 @@ async function runPipelineSpec(input = {}) {
   await writeJson(workflow.state_path, workflow);
   const persister = makePersister(workflow, ctx);
   await attachWorkflowUi(workflow, ctx, input);
-  if (workflow.ui) persister.schedule();
+  if (workflow.ui) {
+    persister.schedule();
+    attachLiveJournalPersistence(workflow, ctx, persister);
+  }
 
   // Barrier-free topological scheduling, shared with the script-scope dag()
   // helper via runDagOnCtx. Each step record is journaled into workflow.workers

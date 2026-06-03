@@ -230,8 +230,9 @@ Bound scope (ctx is auto-injected — never pass it):
 Top-level `await` and a top-level `return` (or top-level `export default <expr>`) become `record.result`.
 The journaled `kind: "script"` record is readable by `status`, updates while the script is running, and includes
 the dynamic worker records spawned by `agent`, `spawnWorker`, `loopUntilDry`, and `adversarialVerify`. See
-`examples/parallel-reduce.workflow.js` and
-`examples/budget-loop.workflow.js`, and `cookbook.md` for the composed patterns.
+`examples/parallel-reduce.workflow.js`, `examples/budget-loop.workflow.js`, and
+`examples/deep-research.workflow.js` (a plan → gather → verify → synthesize research harness), and
+`cookbook.md` for the composed patterns.
 
 Script records also include a source snapshot:
 

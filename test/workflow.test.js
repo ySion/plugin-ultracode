@@ -2,9 +2,21 @@
 
 const test = require("node:test");
 const assert = require("node:assert");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const { engine, MOCK, MOCK_FAIL, withCodexHome, withMockEnv, freshCounterPath } = require("./helpers/env.js");
 const { runWorkflow, readWorkflow } = engine;
+
+async function stopServer(pid) {
+  if (!pid) return;
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 150));
+}
 
 test("legacy fan-out: 2 workers complete, aggregate doubles, state re-readable", async () => {
   await withCodexHome(async (home) => {
@@ -101,6 +113,66 @@ test("workers_spec: concurrent launch is slightly staggered inside one workflow"
     const staggers = wf.events.filter((e) => e.type === "worker.launch_stagger");
     assert.ok(staggers.length >= 2, `expected at least two staggered starts, got ${staggers.length}`);
     assert.ok(staggers.every((e) => e.delay_ms >= 0 && e.delay_ms <= 20), "stagger delays stay tiny");
+  });
+});
+
+test("ui workflow persists worker starts before first completion", async () => {
+  let run = null;
+  let serverPid = null;
+  await withCodexHome(async (home) => {
+    try {
+      run = withMockEnv({ MOCK_CODEX_SLEEP_MS: "500" }, async () =>
+        runWorkflow({
+          cwd: home,
+          codex_bin: MOCK,
+          codex_home: home,
+          concurrency: 2,
+          ui: true,
+          workers_spec: [
+            { prompt: "slow spec one", label: "alpha", schema: null },
+            { prompt: "slow spec two", label: "beta", schema: null }
+          ]
+        })
+      );
+
+      const runsDir = path.join(home, "ultracode", "runs");
+      let midFlight = null;
+      for (let i = 0; i < 80; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        let files = [];
+        try {
+          files = fs.readdirSync(runsDir).filter((file) => file.endsWith(".json"));
+        } catch {
+          files = [];
+        }
+        for (const file of files) {
+          const parsed = JSON.parse(fs.readFileSync(path.join(runsDir, file), "utf8"));
+          serverPid = parsed.ui && parsed.ui.server_pid;
+          const events = Array.isArray(parsed.events) ? parsed.events : [];
+          const workers = Array.isArray(parsed.workers) ? parsed.workers : [];
+          if (
+            parsed.status === "running" &&
+            events.some((event) => event.type === "worker.started") &&
+            workers.some((worker) => worker.status === "running") &&
+            workers.every((worker) => worker.status !== "completed")
+          ) {
+            midFlight = parsed;
+            break;
+          }
+        }
+        if (midFlight) break;
+      }
+
+      assert.ok(midFlight, "state file should show running workers before the first completion");
+      assert.strictEqual(midFlight.workers.filter((worker) => worker.status === "pending").length, 0);
+
+      const final = await run;
+      serverPid = final.ui && final.ui.server_pid;
+      assert.strictEqual(final.status, "completed");
+    } finally {
+      if (run) await run.catch(() => {});
+      await stopServer(serverPid);
+    }
   });
 });
 

@@ -407,6 +407,12 @@ node scripts/ultracode-cli.js examples/parallel-reduce.workflow.js \
 A second example, `examples/budget-loop.workflow.js`, shows a `budget`-bounded `loopUntilDry` discovery
 surfacing `budget.spent()` / `budget.remaining()`.
 
+A third example, `examples/deep-research.workflow.js`, is the ultracode twin of Claude Code's `/deep-research`
+skill: a **plan → gather → verify → synthesize** harness that researches either information (the open web) or
+code (this repo). One planner agent decomposes the topic into sub-questions; a barrier-free `pipeline` streams
+each sub-question through a gather worker and an `adversarialVerify` skeptic vote; then one writer synthesizes
+the surviving, cited claims into a report (`mode: "web" | "code"`).
+
 ### Warm-context workers (opt-in)
 
 By default every worker is a fresh, **ephemeral** `codex exec` subprocess (no session persisted). For a multi-stage
@@ -511,11 +517,19 @@ CODEX_HOME=$(mktemp -d) CODEX_CLI_PATH=test/fixtures/mock-codex.js \
 CODEX_HOME=$(mktemp -d) CODEX_CLI_PATH=test/fixtures/mock-codex.js \
   node scripts/ultracode-cli.js examples/budget-loop.workflow.js \
   --budget-tokens 5000 --max-agents 6 --concurrency 2
+
+CODEX_HOME=$(mktemp -d) MOCK_CODEX_COUNTER=$(mktemp) \
+  CODEX_CLI_PATH=test/fixtures/mock-codex.js \
+  MOCK_CODEX_RESPONSE='{"summary":"mock plan","findings":["Inspect the budget gate implementation"],"recommended_actions":[],"risks":[],"verification":[],"confidence":"high"}' \
+  MOCK_CODEX_ALT_RESPONSE='{"summary":"mock gather","findings":[],"recommended_actions":[],"risks":[],"verification":[],"confidence":"high"}' \
+  node scripts/ultracode-cli.js examples/deep-research.workflow.js \
+  --args '{"topic":"How does the ultracode budget gate work?","mode":"code"}'
 ```
 
-The `examples/` directory ships two ready-to-run scripts: `parallel-reduce.workflow.js` (a fan-out → filter →
-reduce pass) and `budget-loop.workflow.js` (a `budget`-bounded `loopUntilDry` that surfaces `budget.spent()` /
-`budget.remaining()`). The mock honors `MOCK_CODEX_*` env knobs (e.g. `MOCK_CODEX_RESPONSE`, `MOCK_CODEX_EXIT`,
+The `examples/` directory ships three ready-to-run scripts: `parallel-reduce.workflow.js` (a fan-out → filter →
+reduce pass), `budget-loop.workflow.js` (a `budget`-bounded `loopUntilDry` that surfaces `budget.spent()` /
+`budget.remaining()`), and `deep-research.workflow.js` (a plan → gather → `adversarialVerify` → synthesize
+research harness — the ultracode twin of Claude Code's `/deep-research`). The mock honors `MOCK_CODEX_*` env knobs (e.g. `MOCK_CODEX_RESPONSE`, `MOCK_CODEX_EXIT`,
 `MOCK_CODEX_SLEEP_MS`, `MOCK_CODEX_FAIL_TIMES`) — see `test/fixtures/mock-codex.js` and `test/helpers/env.js`.
 
 ## State
