@@ -60,6 +60,12 @@ function iconForNodeStatus(status) {
 }
 
 function nodeMetric(node) {
+  if (node && node.control) {
+    if (node.status === "running") return "waiting";
+    if (node.status === "completed") return Number.isFinite(node.duration_ms) ? formatDuration(node.duration_ms) : "released";
+    if (node.status === "failed") return "blocked";
+    return "queued";
+  }
   if (Number.isFinite(node.duration_ms)) return formatDuration(node.duration_ms);
   const tokens = node.usage && Number.isFinite(node.usage.total_tokens) ? node.usage.total_tokens : null;
   if (tokens !== null) return `${tokens.toLocaleString()} tok`;
@@ -71,6 +77,26 @@ function StatusChip({ status }) {
 }
 
 function AgentDetails({ node, record }) {
+  if (node && node.control) {
+    const detail = {
+      kind: node.wait_kind || "script",
+      item_count: node.item_count,
+      stage_count: node.stage_count,
+      completed_count: node.completed_count,
+      dropped_count: node.dropped_count,
+      duration_ms: node.duration_ms
+    };
+    return h(
+      "div",
+      { className: "agent-details control-details" },
+      h(OutputViewer, {
+        title: node.error ? "Error" : "Wait Signal",
+        value: node.last_message || "Waiting for the script control point to release.",
+        danger: Boolean(node.error)
+      }),
+      h(OutputViewer, { title: "Signal Data", value: detail })
+    );
+  }
   const output = fullOutputText(node);
   const prompt = node && node.spec && node.spec.prompt ? fullText(node.spec.prompt) : "";
   const settings = workerModelSettings(node, record);
@@ -98,7 +124,7 @@ function AgentNode({ node, code, selected, onSelect, setNodeRef, record }) {
     "article",
     {
       ref: (element) => setNodeRef(node.id, element),
-      className: `agent-node status-${node.status || "pending"}${selected ? " selected" : ""}`,
+      className: `agent-node kind-${node.kind || "worker"} status-${node.status || "pending"}${selected ? " selected" : ""}`,
       title: node.last_message || node.title
     },
     h(
@@ -114,7 +140,7 @@ function AgentNode({ node, code, selected, onSelect, setNodeRef, record }) {
         "span",
         { className: "agent-copy" },
         h("span", { className: "agent-title" }, node.title),
-        h("span", { className: "agent-model" }, modelSettingsText(settings))
+        h("span", { className: "agent-model" }, node.control ? node.last_message || "Script scheduling signal" : modelSettingsText(settings))
       ),
       h("span", { className: "agent-time" }, nodeMetric(node)),
       h(StatusChip, { status: node.status })
@@ -299,15 +325,16 @@ export function WorkflowGraph({ record, graph, selectedId, onSelect }) {
       { className: "phase-grid" },
       groups.map((group) => {
         const groupStatus = aggregateStatus(group.nodes);
+        const unit = group.control ? (group.nodes.length === 1 ? "signal" : "signals") : group.nodes.length === 1 ? "agent" : "agents";
         return h(
           "section",
-          { className: "phase-lane", key: group.id, ref: (element) => setLaneRef(group.id, element) },
+          { className: `phase-lane${group.control ? " control-lane" : ""}`, key: group.id, ref: (element) => setLaneRef(group.id, element) },
           h(
             "header",
             { className: `phase-heading status-${groupStatus}` },
             h("span", { className: `phase-icon status-${groupStatus}` }, iconForGroupStatus(groupStatus)),
             h("strong", null, group.label),
-            h("span", null, `${group.nodes.length} agents`)
+            h("span", null, `${group.nodes.length} ${unit}`)
           ),
           h(
             "div",

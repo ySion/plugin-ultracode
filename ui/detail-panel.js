@@ -49,6 +49,7 @@ export function DetailPanel({ selected, events, record }) {
   const prompt = selected.spec && selected.spec.prompt ? compactText(selected.spec.prompt, 700) : "";
   const usage = selected.usage && Number.isFinite(selected.usage.total_tokens) ? selected.usage.total_tokens : null;
   const settings = workerModelSettings(selected, record);
+  const isControl = selected.control === true;
 
   return h(
     "aside",
@@ -64,8 +65,8 @@ export function DetailPanel({ selected, events, record }) {
       { className: "metric-grid" },
       h(Metric, { icon: h(Layers3, { size: 15 }), label: "Type", value: selected.kind }),
       h(Metric, { icon: h(FileText, { size: 15 }), label: "Phase", value: selected.phase }),
-      h(Metric, { icon: h(CircleDot, { size: 15 }), label: "Model", value: settings.model }),
-      h(Metric, { icon: h(CircleDot, { size: 15 }), label: "Reasoning", value: settings.reasoning }),
+      isControl ? h(Metric, { icon: h(CircleDot, { size: 15 }), label: "Kind", value: selected.wait_kind }) : h(Metric, { icon: h(CircleDot, { size: 15 }), label: "Model", value: settings.model }),
+      isControl ? h(Metric, { icon: h(CircleDot, { size: 15 }), label: "Items", value: selected.item_count }) : h(Metric, { icon: h(CircleDot, { size: 15 }), label: "Reasoning", value: settings.reasoning }),
       h(Metric, { icon: h(TimerReset, { size: 15 }), label: "Duration", value: formatDuration(selected.duration_ms) }),
       h(Metric, { icon: h(CircleDot, { size: 15 }), label: "Tokens", value: usage === null ? "" : usage.toLocaleString() })
     ),

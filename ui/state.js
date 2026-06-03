@@ -121,6 +121,47 @@ export function fullOutputText(worker) {
   return "";
 }
 
+function controlStatusFromEvent(event) {
+  if (event.status === "completed" || event.type === "script.wait.completed") return "completed";
+  if (event.status === "failed" || event.type === "script.wait.failed") return "failed";
+  if (event.status === "cancelled") return "cancelled";
+  return "running";
+}
+
+function scriptControlNodes(events, record) {
+  if (!record || record.kind !== "script") return [];
+  const controls = new Map();
+  for (const event of events) {
+    if (!event || typeof event.type !== "string" || !event.type.startsWith("script.wait.")) continue;
+    const data = event.data || {};
+    const rawId = event.id || data.id || event.label || event.type;
+    const id = `script-control-${rawId}`;
+    const existing = controls.get(id) || {
+      id,
+      step_id: id,
+      label: event.label || "Script wait",
+      title: event.label || "Script wait",
+      kind: "control",
+      phase: "Script control",
+      status: "pending",
+      last_message: "",
+      events: []
+    };
+    existing.status = controlStatusFromEvent(event);
+    existing.last_message = event.message || existing.last_message;
+    existing.wait_kind = data.kind || null;
+    existing.item_count = data.item_count;
+    existing.stage_count = data.stage_count;
+    existing.completed_count = data.completed_count;
+    existing.dropped_count = data.dropped_count;
+    existing.duration_ms = data.duration_ms;
+    existing.error = data.error || existing.error;
+    existing.events = [...existing.events, event];
+    controls.set(id, existing);
+  }
+  return Array.from(controls.values());
+}
+
 export function lastMessageFor(worker, events) {
   if (!worker) return "";
   const keys = new Set([worker.id, worker.step_id, worker.label, worker.title].filter(Boolean));
@@ -178,7 +219,7 @@ export function normalizeWorkflow(record) {
   const events = Array.isArray(record && record.events) ? record.events : [];
   const primary = Array.isArray(record && record.steps) && record.steps.length > 0 ? record.steps : record.workers;
   const workers = Array.isArray(primary) ? primary : [];
-  const nodes = workers.map((worker, index) => {
+  const workerNodes = workers.map((worker, index) => {
     const id = worker.id || worker.step_id || `worker-${index + 1}`;
     const kind = worker.kind || (worker.spec && worker.spec.kind) || (record.kind === "script" ? "agent" : "worker");
     return {
@@ -194,11 +235,18 @@ export function normalizeWorkflow(record) {
       last_message: lastMessageFor(worker, events)
     };
   });
+  const controlNodes = scriptControlNodes(events, record).map((node, index) => ({
+    ...node,
+    index,
+    control: true,
+    status: node.status || "pending"
+  }));
+  const nodes = [...workerNodes, ...controlNodes];
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   for (const node of nodes) {
     if (node.step_id) nodeById.set(node.step_id, node);
   }
-  const counts = nodes.reduce(
+  const counts = workerNodes.reduce(
     (acc, node) => {
       acc[node.status] = (acc[node.status] || 0) + 1;
       return acc;
@@ -210,11 +258,13 @@ export function normalizeWorkflow(record) {
   for (const node of nodes) {
     const key = node.phase || "Workflow";
     if (!phaseMap.has(key)) {
-      const group = { id: key, label: key, nodes: [] };
+      const group = { id: key, label: key, nodes: [], control: node.control === true };
       phaseMap.set(key, group);
       phases.push(group);
     }
-    phaseMap.get(key).nodes.push(node);
+    const group = phaseMap.get(key);
+    group.control = group.control || node.control === true;
+    group.nodes.push(node);
   }
   const links = [];
   for (const node of nodes) {
@@ -228,7 +278,17 @@ export function normalizeWorkflow(record) {
       }
     }
   }
-  return { events, nodes, counts, phases, links };
+  return {
+    events,
+    nodes,
+    workerNodes,
+    controlNodes,
+    agent_count: workerNodes.length,
+    control_count: controlNodes.length,
+    counts,
+    phases,
+    links
+  };
 }
 
 export function formatDate(value) {

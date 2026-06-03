@@ -20,13 +20,16 @@ const SUMMARY_ITEMS = [
 ];
 
 function statusSentence(graph) {
-  const agents = graph.nodes.length || 0;
+  const agents = Number.isFinite(graph.agent_count) ? graph.agent_count : graph.nodes.length || 0;
   const failed = graph.counts.failed || 0;
   const groups = graph.phases.length || 0;
+  const controls = Number.isFinite(graph.control_count) ? graph.control_count : 0;
+  const controlText = controls ? ` / ${controls} script ${controls === 1 ? "signal" : "signals"}` : "";
   return h(
     "p",
     { className: "status-sentence" },
     `${agents} agents across ${groups} groups`,
+    controlText,
     failed ? h("span", { className: "failure-note" }, ` / ${failed} failures need review`) : h("span", null, " / no failures")
   );
 }

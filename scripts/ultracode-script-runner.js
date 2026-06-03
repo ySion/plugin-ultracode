@@ -124,6 +124,19 @@ function scriptWorkerRecordFromResult(meta, result, fallbackIndex) {
   return engine.workerRecordFromResult(base, result);
 }
 
+function emitScriptEvent(ctx, event) {
+  if (!ctx) return;
+  const stamped = { at: new Date().toISOString(), ...event };
+  ctx.events.push(stamped);
+  if (ctx.onEvent) {
+    try {
+      ctx.onEvent(stamped);
+    } catch {
+      /* progress sink errors must never break a run */
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Source transform.
 //
@@ -182,7 +195,9 @@ const SCOPE_PARAMS = [
 
 function buildScope(ctx, input, hooks = {}) {
   let currentPhase = null;
+  let currentAutoPhase = null;
   let scriptCallIndex = 0;
+  let controlCallIndex = 0;
 
   // Defaults shared by every spawn: where the codex bin/home live and the cwd.
   // These come from the runScript input so a script never has to repeat them.
@@ -211,7 +226,7 @@ function buildScope(ctx, input, hooks = {}) {
     const normalizedOpts = normalizeWorkerOpts(opts);
     const callOpts = {
       ...spawnDefaults,
-      phase: currentPhase,
+      phase: currentPhase || currentAutoPhase,
       ...normalizedOpts
     };
     const key = cacheKey({ kind: "spawnWorker", prompt, opts: callOpts });
@@ -273,8 +288,71 @@ function buildScope(ctx, input, hooks = {}) {
   // positionally would silently null every item (opts lands on a stage fn so
   // ctx becomes null and even the drop-log is a no-op). Each stage receives
   // (prev, item, index, ctx).
-  function pipeline(items, ...stages) {
-    return engine.runPipeline(items, stages, { ctx });
+  async function pipeline(items, ...stages) {
+    const pipelineIndex = controlCallIndex + 1;
+    const callId = `pipeline-${pipelineIndex}`;
+    const label = `Pipeline ${pipelineIndex}`;
+    controlCallIndex += 1;
+    const itemCount = Array.isArray(items) ? items.length : null;
+    const stageCount = stages.length;
+    const startedAt = Date.now();
+    const itemLabel = itemCount === null ? "items" : `${itemCount} ${itemCount === 1 ? "item" : "items"}`;
+    emitScriptEvent(ctx, {
+      type: "script.wait.started",
+      id: callId,
+      label,
+      status: "running",
+      message: `Script is waiting for ${itemLabel} to finish ${stageCount} pipeline ${stageCount === 1 ? "stage" : "stages"} before it can schedule the next statement.`,
+      data: {
+        kind: "pipeline",
+        item_count: itemCount,
+        stage_count: stageCount,
+        phase: currentPhase
+      }
+    });
+    const previousAutoPhase = currentAutoPhase;
+    if (!currentPhase && !currentAutoPhase) currentAutoPhase = label;
+    try {
+      const result = await engine.runPipeline(items, stages, { ctx });
+      const completed = Array.isArray(result) ? result.filter((item) => item !== null).length : null;
+      const dropped = Array.isArray(result) ? result.length - completed : null;
+      emitScriptEvent(ctx, {
+        type: "script.wait.completed",
+        id: callId,
+        label,
+        status: "completed",
+        message: `Pipeline barrier released; the script can schedule the next statement.`,
+        data: {
+          kind: "pipeline",
+          item_count: itemCount,
+          stage_count: stageCount,
+          completed_count: completed,
+          dropped_count: dropped,
+          duration_ms: Date.now() - startedAt,
+          phase: currentPhase
+        }
+      });
+      return result;
+    } catch (error) {
+      emitScriptEvent(ctx, {
+        type: "script.wait.failed",
+        id: callId,
+        label,
+        status: "failed",
+        message: `Pipeline barrier failed: ${error.message}`,
+        data: {
+          kind: "pipeline",
+          item_count: itemCount,
+          stage_count: stageCount,
+          duration_ms: Date.now() - startedAt,
+          phase: currentPhase,
+          error: error.message
+        }
+      });
+      throw error;
+    } finally {
+      currentAutoPhase = previousAutoPhase;
+    }
   }
 
   function loopUntilDry(makePrompt, opts = {}) {

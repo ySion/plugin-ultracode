@@ -19,7 +19,8 @@ function JsonScalar({ value }) {
 }
 
 function JsonTable({ value }) {
-  const entries = Array.isArray(value) ? value.map((item, index) => [String(index), item]) : Object.entries(value || {});
+  if (Array.isArray(value)) return h(JsonList, { value });
+  const entries = Object.entries(value || {});
   if (entries.length === 0) return h("div", { className: "json-empty" }, Array.isArray(value) ? "[]" : "{}");
   return h(
     "table",
@@ -36,6 +37,15 @@ function JsonTable({ value }) {
         )
       )
     )
+  );
+}
+
+function JsonList({ value }) {
+  if (value.length === 0) return h("div", { className: "json-empty" }, "[]");
+  return h(
+    "div",
+    { className: "json-list" },
+    value.map((item, index) => h("div", { className: "json-list-item", key: index }, h(JsonValue, { value: item })))
   );
 }
 

@@ -317,6 +317,35 @@ test("pipeline() zero-stage passthrough returns items as-is", async () => {
   assert.deepStrictEqual(rec.result, [1, 2, 3]);
 });
 
+test("pipeline() journals script wait events for UI control-flow visibility", async () => {
+  const rec = await runScript({
+    source: "const out = await pipeline([1,2], (prev) => prev * 10); return out;",
+    ...baseOpts()
+  });
+  assert.strictEqual(rec.status, "completed");
+  assert.deepStrictEqual(rec.result, [10, 20]);
+  const started = rec.events.find((event) => event.type === "script.wait.started");
+  const completed = rec.events.find((event) => event.type === "script.wait.completed");
+  assert.ok(started, "started wait event is journaled");
+  assert.ok(completed, "completed wait event is journaled");
+  assert.strictEqual(started.id, completed.id, "wait events share a stable control id");
+  assert.strictEqual(started.data.item_count, 2);
+  assert.strictEqual(started.data.stage_count, 1);
+  assert.strictEqual(completed.data.completed_count, 2);
+  assert.strictEqual(completed.data.dropped_count, 0);
+});
+
+test("pipeline() gives unphased child agents an automatic pipeline group", async () => {
+  const rec = await runScript({
+    source: "const out = await pipeline([1], (_prev, item) => agent('inspect ' + item)); return { ok: !!out[0] };",
+    ...baseOpts()
+  });
+  assert.strictEqual(rec.status, "completed");
+  assert.strictEqual(rec.result.ok, true);
+  assert.strictEqual(rec.workers.length, 1);
+  assert.strictEqual(rec.workers[0].phase, "Pipeline 1");
+});
+
 // ---------------------------------------------------------------------------
 // Journaling round-trip: status tool readable by id and by latest-state.
 // ---------------------------------------------------------------------------
