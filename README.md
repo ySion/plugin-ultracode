@@ -215,6 +215,19 @@ run-level and per-agent model/reasoning settings, agent/step nodes, phases, depe
 events, prompts, errors, and output details. The server binds to `127.0.0.1`, reuses one process per
 `CODEX_HOME`, and exits after an idle timeout.
 
+Live script pipelines show worker groups alongside script-control wait signals, so follow-up stages are visible
+even before the script has scheduled their agents:
+
+![Ultracode dashboard showing a live pipeline and script-control wait signal](assets/screenshots/dashboard-running-pipeline.jpg)
+
+Agent details render structured output in-place, including compact key/value tables and list-style arrays:
+
+![Ultracode dashboard showing structured agent output details](assets/screenshots/dashboard-output-details.jpg)
+
+Failure states keep the affected worker, dependency lane, prompt, and error visible for fast triage:
+
+![Ultracode dashboard showing a failed verification worker](assets/screenshots/dashboard-failed-worker.jpg)
+
 Disable it with `--no-ui` or `ULTRACODE_UI=0`:
 
 ```bash
