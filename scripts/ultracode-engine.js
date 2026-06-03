@@ -2061,6 +2061,8 @@ async function runExplicitWorkflow(input) {
       title: spec.label,
       label: spec.label,
       phase: spec.phase,
+      model: spec.model || null,
+      reasoning_effort: spec.reasoning_effort || null,
       status: "pending",
       // Stored so the run can be resumed without the original call.
       spec: {
@@ -2165,6 +2167,8 @@ async function runWorkflow(input = {}) {
       ...worker,
       step_id: stepId({ kind: "role", role: worker.id, index: worker.index }),
       phase: null,
+      model: options.model || null,
+      reasoning_effort: options.reasoning_effort || null,
       status: "pending"
     })),
     events: ctx.events,
@@ -2686,6 +2690,8 @@ function stepRecordFromExecution(step, execution, durationMs) {
     title: step.label,
     label: step.label,
     phase: step.phase,
+    model: step.model || null,
+    reasoning_effort: step.reasoning_effort || null,
     status: allCancelled ? "cancelled" : allFailed ? "failed" : "completed",
     result: execution.output,
     value: execution.output,
@@ -2717,6 +2723,8 @@ function stepFailureRecord(step, error) {
     title: step.label,
     label: step.label,
     phase: step.phase,
+    model: step.model || null,
+    reasoning_effort: step.reasoning_effort || null,
     status: "failed",
     result: null,
     value: null,
@@ -2839,6 +2847,8 @@ async function runPipelineSpec(input = {}) {
     title: step.label,
     label: step.label,
     phase: step.phase,
+    model: step.model || null,
+    reasoning_effort: step.reasoning_effort || null,
     status: "pending"
   }));
   const workflow = {

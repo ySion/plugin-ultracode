@@ -6,6 +6,7 @@ import {
   Clock3
 } from "./icons.js";
 import { agentDisplayCode, formatDuration, fullOutputText, fullText } from "./state.js";
+import { modelSettingsText, workerModelSettings } from "./model-settings.js";
 import { OutputViewer } from "./output-viewer.js";
 import { OrbScene } from "./orb-scene.js";
 
@@ -69,12 +70,19 @@ function StatusChip({ status }) {
   return h("span", { className: `ledger-chip status-${status || "pending"}` }, STATUS_LABELS[status] || "Pending");
 }
 
-function AgentDetails({ node }) {
+function AgentDetails({ node, record }) {
   const output = fullOutputText(node);
   const prompt = node && node.spec && node.spec.prompt ? fullText(node.spec.prompt) : "";
+  const settings = workerModelSettings(node, record);
   return h(
     "div",
     { className: "agent-details" },
+    h(
+      "div",
+      { className: "agent-settings" },
+      h("span", null, "Model", h("strong", null, settings.model)),
+      h("span", null, "Reasoning", h("strong", null, settings.reasoning))
+    ),
     h(OutputViewer, {
       title: node && node.error ? "Error" : "Output",
       value: output || "No output recorded yet.",
@@ -84,7 +92,8 @@ function AgentDetails({ node }) {
   );
 }
 
-function AgentNode({ node, code, selected, onSelect, setNodeRef }) {
+function AgentNode({ node, code, selected, onSelect, setNodeRef, record }) {
+  const settings = workerModelSettings(node, record);
   return h(
     "article",
     {
@@ -101,11 +110,16 @@ function AgentNode({ node, code, selected, onSelect, setNodeRef }) {
       },
       h("span", { className: "agent-code" }, code),
       h("span", { className: `agent-glyph status-${normalizeStatus(node.status)}` }, iconForNodeStatus(node.status)),
-      h("span", { className: "agent-title" }, node.title),
+      h(
+        "span",
+        { className: "agent-copy" },
+        h("span", { className: "agent-title" }, node.title),
+        h("span", { className: "agent-model" }, modelSettingsText(settings))
+      ),
       h("span", { className: "agent-time" }, nodeMetric(node)),
       h(StatusChip, { status: node.status })
     ),
-    selected ? h(AgentDetails, { node }) : null
+    selected ? h(AgentDetails, { node, record }) : null
   );
 }
 
@@ -306,7 +320,8 @@ export function WorkflowGraph({ record, graph, selectedId, onSelect }) {
                     code: agentDisplayCode(node),
                     selected: node.id === selectedId,
                     onSelect,
-                    setNodeRef
+                    setNodeRef,
+                    record
                   })
                 )
               : h("p", { className: "empty-lane" }, "No workers in this group.")

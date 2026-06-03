@@ -4,6 +4,7 @@ import { WorkflowGraph } from "./graph.js";
 import { WorkflowLibrary } from "./workflow-library.js";
 import { RunSwitcher } from "./run-switcher.js";
 import { fetchJson, formatDuration, normalizeWorkflow, totalTokens, workflowIdFromLocation } from "./state.js";
+import { runModelSettings } from "./model-settings.js";
 
 const React = window.React;
 const { useEffect, useMemo, useState } = React;
@@ -59,6 +60,7 @@ function TopBar({ record, graph, error }) {
   const title = record && (record.name || record.display_name || record.task) ? record.name || record.display_name || record.task : record && record.id ? record.id : "Workflow Monitor";
   const id = record && record.id ? record.id : "latest";
   const cwd = record && record.cwd ? record.cwd : "workspace";
+  const settings = runModelSettings(record);
 
   return h(
     "header",
@@ -68,7 +70,15 @@ function TopBar({ record, graph, error }) {
       { className: "title-block" },
       h("div", { className: "breadcrumb" }, `~/runs / ultracode / ${id}`),
       h("h1", null, title),
-      record ? statusSentence(graph) : h("p", { className: "status-sentence" }, error || `Waiting for a workflow record in ${cwd}.`)
+      record ? statusSentence(graph) : h("p", { className: "status-sentence" }, error || `Waiting for a workflow record in ${cwd}.`),
+      record
+        ? h(
+            "div",
+            { className: "run-settings", "aria-label": "Run model settings" },
+            h("span", null, "Model", h("strong", null, settings.model)),
+            h("span", null, "Reasoning", h("strong", null, settings.reasoning))
+          )
+        : null
     )
   );
 }

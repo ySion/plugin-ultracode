@@ -76,10 +76,12 @@ Fans out the built-in fixed reviewer roles in parallel and returns structured fi
 - `task`: natural-language objective (required unless `workers_spec` is given).
 - `cwd`: repository or workspace path. Use the current working directory when possible.
 - `workers`: 1-8. Use 3 for normal deep work, 5-6 for broad audits.
-- `model`: optional Codex model for child workers. **Omit by default** — a worker with no `model` runs on
-  Codex's configured default; pin a tier only when you're confident a different one fits the task, and prefer
-  setting it per-`workers_spec`/step rather than globally.
-- `reasoning_effort`: optional `low`, `medium`, `high`, or `xhigh`.
+- `model`: optional Codex model for child workers. Choose deliberately by task complexity: `gpt-5.4-mini` for
+  straightforward/narrow work and `gpt-5.5` for research, coding, and problem-solving lanes. Prefer
+  per-`workers_spec`/step overrides when a workflow mixes cheap scout lanes with deeper verifier/writer lanes.
+- `reasoning_effort`: optional `low`, `medium`, `high`, or `xhigh`. Use `gpt-5.4-mini` + `high` for
+  straightforward/narrow tasks, `gpt-5.5` + `medium` for standard research/search, `gpt-5.5` + `high` for
+  standard coding, and `gpt-5.5` + `xhigh` for hard problem solving.
 - `sandbox`: default `read-only`. Use `workspace-write` or `danger-full-access` only when the user explicitly
   wants child workers to modify files.
 - `timeout_ms`: per-worker timeout (default 1,200,000 = 20 min; min 1000). The kill ladder is SIGTERM then

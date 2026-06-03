@@ -7,9 +7,11 @@ back as the next prompt until it survives), *staged escalation* (cheap broad fin
 the survivors to high-effort skeptics). The primitives (`agent`/`parallel`/`pipeline`/`adversarialVerify`/
 `loopUntilDry` + a host `while` loop) compose into anything.
 
-**Disposition.** Default to *verifying* your own findings before you trust or report them — lean toward an
-adversarial pass. The bar is to *skip* verification (trivial finding, or already independently verified), not
-to perform it. A confident-sounding worker is not a verified one.
+**Disposition.** Build the richest useful workflow first, then let it do the work. Prefer composing finder
+lanes, critic passes, adversarial verification, and synthesis inside the workflow instead of running a small
+panel and finishing the important reasoning in the parent thread. Default to *verifying* your own findings before
+you trust or report them — lean toward an adversarial pass. The bar is to *skip* verification (trivial finding,
+or already independently verified), not to perform it. A confident-sounding worker is not a verified one.
 
 For copy-pasteable, code-verified versions of everything below, see `cookbook.md`.
 
@@ -69,6 +71,8 @@ and injects it into each round's prompt (see the composed harness in `cookbook.m
 Parallel finders each searching a *different way* — by-module, by-symbol/grep, by-test surface,
 by-recent-change — each blind to the others. One search angle never surfaces everything. A `workers_spec[]` /
 `parallel()` fan-out with a distinct prompt per lane. Pairs naturally with loop-until-dry (one sweep per round).
+When unsure whether a lane is worthwhile, include it and let the synthesis stage merge or discard low-yield
+results; do not keep that search angle in the parent thread to save agents.
 
 ## Completeness critic
 
@@ -76,6 +80,9 @@ End an audit with one worker whose only job is "what's missing — a module not 
 file not read?" Its output is *work, not commentary*: spawn a targeted follow-up pass against exactly the gaps
 it names, and loop critic→fill until it comes back empty. Nothing automates this — it's a pattern you build from
 `run` / `pipeline`, not a primitive.
+
+Use this as the anti-rationing safety valve: if the parent is tempted to keep investigating after a first pass,
+turn that curiosity into a completeness critic and follow-up lanes inside the workflow.
 
 ## Loop-until-budget
 

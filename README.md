@@ -211,8 +211,9 @@ node scripts/ultracode-cli.js "review the auth refactor" --workers 4 --progress
 ```
 
 The UI reads the same `$CODEX_HOME/ultracode/runs/<id>.json` records as `status`. It shows the workflow status,
-agent/step nodes, phases, dependency lines, last messages, events, prompts, errors, and output details. The
-server binds to `127.0.0.1`, reuses one process per `CODEX_HOME`, and exits after an idle timeout.
+run-level and per-agent model/reasoning settings, agent/step nodes, phases, dependency lines, last messages,
+events, prompts, errors, and output details. The server binds to `127.0.0.1`, reuses one process per
+`CODEX_HOME`, and exits after an idle timeout.
 
 Disable it with `--no-ui` or `ULTRACODE_UI=0`:
 

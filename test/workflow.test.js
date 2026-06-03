@@ -16,13 +16,19 @@ test("legacy fan-out: 2 workers complete, aggregate doubles, state re-readable",
         cwd: home,
         codex_bin: MOCK,
         codex_home: home,
-        concurrency: 2
+        concurrency: 2,
+        model: "gpt-5.5",
+        reasoning_effort: "high"
       })
     );
 
     assert.strictEqual(wf.status, "completed");
+    assert.strictEqual(wf.options.model, "gpt-5.5");
+    assert.strictEqual(wf.options.reasoning_effort, "high");
     assert.strictEqual(wf.workers.length, 2);
     assert.ok(wf.workers.every((w) => w.status === "completed"));
+    assert.ok(wf.workers.every((w) => w.model === "gpt-5.5"));
+    assert.ok(wf.workers.every((w) => w.reasoning_effort === "high"));
 
     // aggregate_usage = 2x per-worker. total_tokens per worker = 10+5+3 = 18 => 36
     assert.strictEqual(wf.aggregate_usage.total_tokens, 36);
@@ -44,9 +50,11 @@ test("workers_spec: explicit path runs both specs (incl schema:null), stores spe
         codex_bin: MOCK,
         codex_home: home,
         concurrency: 2,
+        model: "gpt-5.5",
+        reasoning_effort: "medium",
         workers_spec: [
           { prompt: "spec one", label: "alpha" },
-          { prompt: "spec two", label: "beta", schema: null }
+          { prompt: "spec two", label: "beta", schema: null, model: "gpt-5.4-mini", reasoning_effort: "high" }
         ]
       })
     );
@@ -60,8 +68,13 @@ test("workers_spec: explicit path runs both specs (incl schema:null), stores spe
     assert.ok(wf.workers.every((w) => w.status === "completed"));
     // Each worker has a stored spec for resume.
     assert.ok(wf.workers.every((w) => w.spec && typeof w.spec.prompt === "string"));
+    const alpha = wf.workers.find((w) => w.label === "alpha");
+    assert.strictEqual(alpha.model, "gpt-5.5", "top-level model inherited from workflow");
+    assert.strictEqual(alpha.reasoning_effort, "medium", "top-level reasoning inherited from workflow");
     const beta = wf.workers.find((w) => w.label === "beta");
     assert.strictEqual(beta.spec.schema, null, "schema:null preserved in stored spec");
+    assert.strictEqual(beta.model, "gpt-5.4-mini", "top-level model override is journaled");
+    assert.strictEqual(beta.reasoning_effort, "high", "top-level reasoning override is journaled");
     assert.strictEqual(beta.value, beta.result, "raw-text workers expose both result and value");
   });
 });

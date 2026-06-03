@@ -18,6 +18,8 @@ out, reading the evidence that comes back, and integrating the result. The failu
 opposite: doing the investigation yourself in the parent thread and bolting on a worker or two as a sidecar. If
 you catch yourself reading files and reasoning through the whole task *before* (or *instead of*) spawning
 workers, you're under-using the engine. Scout only enough to scope the work, then delegate the work itself.
+Put as much of the real work into the workflow as possible: design the DAG/script carefully, launch it, and let
+the engine run through the investigation, implementation, verification, and synthesis lanes.
 
 This file is the **decision layer** — read it to decide whether and at what scale to use Ultracode, and how to
 shape the run. Pull depth from `references/` only when you're actually building:
@@ -28,11 +30,17 @@ shape the run. Pull depth from `references/` only when you're actually building:
 | about to write a `steps[]` DAG or a `script` — get the shape right first | `references/cookbook.md` |
 | needing an exact flag, step field, primitive signature, or the `script` API | `references/cli.md` |
 
+Before launching a non-trivial run, open `references/quality-patterns.md` and pick the quality harness first:
+adversarial verify, multi-modal sweep, completeness critic, loop-until-dry, judge panel, or a composed variant.
+Do this before settling on worker count or writing prompts, so the workflow is shaped around verification and
+coverage rather than a thin generic fan-out.
+
 ## When to reach for Ultracode
 
 When this skill is in play, **default to orchestrating** — author a workflow and let it run the task. Work solo
-only when the task is genuinely trivial, local, or already known. A fan-out earns its overhead when one of three
-things is true:
+only when the task is genuinely tiny and already settled. The parent thread's job is to build the workflow
+right, not to conserve agent usage by doing worker-suitable work inline. A fan-out earns its place when one of
+three things is true:
 
 - **Be comprehensive.** The task means sweeping many files, modules, or call sites and you want them covered in
   parallel: broad audits, "find every X", understanding a whole subsystem.
@@ -41,34 +49,46 @@ things is true:
 - **Take on scale one pass can't hold.** Migrations, repo-wide sweeps, investigations whose evidence won't fit a
   single thread's attention.
 
-A `codex exec` fan-out has real overhead (subprocess startup, no shared memory, synthesis cost), so a one-file
-question you already understand is not worth it. But under *this* skill the more common mistake is the reverse —
-staying solo on work that wanted a fleet. When in doubt, orchestrate.
+A `codex exec` fan-out has startup overhead, but the engine exists to absorb parallel work. Do not ration agents
+or keep chunks of investigation in the parent merely to limit resource usage. The common mistake under *this*
+skill is staying solo on work that wanted a fleet. When in doubt, orchestrate.
 
 **You don't need the shape before the task — only before the orchestration step.** The right move is often
 *hybrid*: scout inline first (list the files, scope the diff, find the call sites), then hand that work-list to a
 `dag` / `fanout` over it. Discovering the work-list is parent work; doing the work on each item is the
 fleet's.
 
-**Chain workflows across phases.** Big work is rarely one fan-out. Run several in sequence —
-understand → design → implement → review — reading each result before launching the next. Each run is one
-well-scoped fan-out and you stay in the loop between them. A multi-stage task is *more* orchestration, not a
-reason to drop back to solo.
+**Build the workflow before doing the work.** Spend the parent-thread effort on decomposing the task into
+parallel lanes, explicit dependencies, schemas, verification passes, and synthesis stages. Once the workflow is
+well-shaped, launch it and let it run. If the task has phases — understand → design → implement → review — put
+those phases into the workflow itself where possible, using a script or DAG so results flow forward without the
+parent becoming the hidden worker.
 
-**Scale to the request.** Match worker count and verification depth to what was asked:
+**Scale up by default.** Match workflow depth to the task's real shape, then let the engine handle the
+parallelism. Treat small worker counts as a narrow-task optimization, not a resource-saving habit:
 
-- "Take a quick look" → 2-3 finders, single-vote verify (or none).
-- "Review this change" → a fixed-role fan-out (3-5 workers) + an adversarial pass over the findings.
-- "Thoroughly audit / be exhaustive / sign off on this" → a large finder pool or a loop-until-dry, a 3-5 vote
-  adversarial pass with distinct lenses, then a synthesis stage.
+- "Take a quick look" → still delegate the scan: 2-3 focused lanes plus a light verifier when claims matter.
+- "Review this change" → multi-lens finders, per-finding adversarial verification, and a synthesis stage.
+- "Thoroughly audit / be exhaustive / sign off on this" → broad multi-modal sweeps, loop-until-dry or
+  completeness-critic rounds, distinct-lens verification, and a final sign-off synthesis.
 
 The smell test for *this* skill: if you spawned one worker and did the rest yourself, you **under**-orchestrated —
-the common miss here. (Over-orchestration has its own smell — a barrier around a per-item transform — in *Barrier
-vs barrier-free* below.) Don't run a six-worker audit for a one-file question, and don't run three finders when
-asked to be exhaustive.
+the common miss here. A complex, detailed workflow is usually better than a small sidecar fan-out. The main
+thing to avoid is not "too many agents"; it is a poorly-shaped workflow with unnecessary barriers, missing
+schemas, or no verification.
 
 ## Operating rules
 
+- **Choose model and reasoning by task complexity.** When a run does not require a custom model mix, set the
+  worker `model` and `reasoning_effort` deliberately instead of leaving complexity implicit:
+  `gpt-5.4-mini` + `high` for straightforward, narrow tasks; `gpt-5.5` + `medium` for standard research/search;
+  `gpt-5.5` + `high` for standard coding; `gpt-5.5` + `xhigh` for hard problem solving. For mixed workflows,
+  keep the cheap/narrow lanes on `gpt-5.4-mini` + `high` and escalate only the stages that need broader
+  reasoning. Do not use `xhigh` as a blanket default.
+- **Do not hoard the work in the parent thread.** If a task can be expressed as a worker lane, stage, verifier,
+  critic, judge, writer, or synthesizer, put it in the workflow. Parent work should mostly be: choose the
+  decomposition, set schemas and edges, launch, monitor failures, integrate returned evidence/diffs, and run the
+  final checks. Avoid saving "just the important part" for yourself after launching agents.
 - **Delegate the work — including the implementation; you integrate, you don't re-author.** Hand investigation,
   analysis, verification, *and the edits themselves* to the workers — and the **larger the change, the more it
   should be the fleet's, not yours**. A migration, a repo-wide rename, a codemod across many files is the *most*
