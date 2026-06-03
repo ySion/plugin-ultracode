@@ -5,7 +5,8 @@ import {
   CircleSlash,
   Clock3
 } from "./icons.js";
-import { agentDisplayCode, formatDuration } from "./state.js";
+import { agentDisplayCode, formatDuration, fullOutputText, fullText } from "./state.js";
+import { OutputViewer } from "./output-viewer.js";
 import { OrbScene } from "./orb-scene.js";
 
 const React = window.React;
@@ -68,6 +69,21 @@ function StatusChip({ status }) {
   return h("span", { className: `ledger-chip status-${status || "pending"}` }, STATUS_LABELS[status] || "Pending");
 }
 
+function AgentDetails({ node }) {
+  const output = fullOutputText(node);
+  const prompt = node && node.spec && node.spec.prompt ? fullText(node.spec.prompt) : "";
+  return h(
+    "div",
+    { className: "agent-details" },
+    h(OutputViewer, {
+      title: node && node.error ? "Error" : "Output",
+      value: output || "No output recorded yet.",
+      danger: Boolean(node && node.error)
+    }),
+    prompt ? h(OutputViewer, { title: "Prompt", value: prompt }) : null
+  );
+}
+
 function AgentNode({ node, code, selected, onSelect, setNodeRef }) {
   return h(
     "article",
@@ -88,7 +104,8 @@ function AgentNode({ node, code, selected, onSelect, setNodeRef }) {
       h("span", { className: "agent-title" }, node.title),
       h("span", { className: "agent-time" }, nodeMetric(node)),
       h(StatusChip, { status: node.status })
-    )
+    ),
+    selected ? h(AgentDetails, { node }) : null
   );
 }
 

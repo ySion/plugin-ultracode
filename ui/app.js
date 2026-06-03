@@ -3,7 +3,6 @@ import { JournalPanel } from "./journal-panel.js";
 import { WorkflowGraph } from "./graph.js";
 import { WorkflowLibrary } from "./workflow-library.js";
 import { RunSwitcher } from "./run-switcher.js";
-import { DetailPanel } from "./detail-panel.js";
 import { fetchJson, formatDuration, normalizeWorkflow, totalTokens, workflowIdFromLocation } from "./state.js";
 
 const React = window.React;
@@ -56,11 +55,10 @@ function StatsStrip({ record, graph }) {
   );
 }
 
-function TopBar({ record, graph, refreshing, error }) {
+function TopBar({ record, graph, error }) {
   const title = record && (record.name || record.display_name || record.task) ? record.name || record.display_name || record.task : record && record.id ? record.id : "Workflow Monitor";
   const id = record && record.id ? record.id : "latest";
   const cwd = record && record.cwd ? record.cwd : "workspace";
-  const status = record && record.status ? record.status : graph.counts.running ? "running" : graph.counts.failed ? "failed" : graph.counts.completed ? "completed" : "pending";
 
   return h(
     "header",
@@ -68,17 +66,7 @@ function TopBar({ record, graph, refreshing, error }) {
     h(
       "div",
       { className: "title-block" },
-      h(
-        "div",
-        { className: "breadcrumb-row" },
-        h("div", { className: "breadcrumb" }, `~/runs / ultracode / ${id}`),
-        h(
-          "div",
-          { className: "topbar-signals" },
-          h("span", { className: `refresh-pill${refreshing ? " refreshing" : ""}` }, refreshing ? "Syncing" : "Live"),
-          h("span", { className: `run-state-pill status-${status}` }, status)
-        )
-      ),
+      h("div", { className: "breadcrumb" }, `~/runs / ultracode / ${id}`),
       h("h1", null, title),
       record ? statusSentence(graph) : h("p", { className: "status-sentence" }, error || `Waiting for a workflow record in ${cwd}.`)
     )
@@ -93,12 +81,6 @@ function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const graph = useMemo(() => normalizeWorkflow(record || {}), [record]);
-  const selected =
-    graph.nodes.find((node) => node.id === selectedId) ||
-    graph.nodes.find((node) => node.status === "failed") ||
-    graph.nodes.find((node) => node.status === "running") ||
-    graph.nodes[0] ||
-    null;
 
   async function load(nextId = workflowId) {
     setRefreshing(true);
@@ -132,7 +114,7 @@ function App() {
   }
 
   function inspectAgent(id) {
-    setSelectedId(id);
+    setSelectedId((current) => (current === id ? null : id));
   }
 
   function runStarted(id) {
@@ -146,16 +128,11 @@ function App() {
     { className: "app-shell" },
     h(WorkflowLibrary, { record, onRunStarted: runStarted, onError: setError }),
     h(RunSwitcher, { runs, activeId: record && record.id, onSelect: selectRun }),
-    h(TopBar, { record, graph, refreshing, error }),
+    h(TopBar, { record, graph, error }),
     error ? h("div", { className: "error-banner" }, h(AlertTriangle, { size: 18 }), h("span", null, error)) : null,
     h(StatsStrip, { record, graph }),
-    h(
-      "section",
-      { className: "workflow-workspace" },
-      h(WorkflowGraph, { record: record || {}, graph, selectedId: selected && selected.id, onSelect: inspectAgent }),
-      h(DetailPanel, { selected, events: graph.events, record })
-    ),
-    h(JournalPanel, { graph, onSelectWorker: inspectAgent }),
+    h(WorkflowGraph, { record: record || {}, graph, selectedId, onSelect: inspectAgent }),
+    h(JournalPanel, { graph }),
     h(
       "footer",
       { className: "app-footer" },

@@ -94,7 +94,7 @@ function EventDetails({ event, worker, status }) {
   );
 }
 
-function EventRow({ event, nodes, index, expanded, onToggle, onSelectWorker }) {
+function EventRow({ event, nodes, index, expanded, onToggle }) {
   const worker = workerForEvent(event, nodes);
   const status = statusForEvent(event, worker);
   const code = agentDisplayCode(worker, index);
@@ -107,10 +107,7 @@ function EventRow({ event, nodes, index, expanded, onToggle, onSelectWorker }) {
       {
         className: "journal-row",
         type: "button",
-        onClick: () => {
-          if (worker && typeof onSelectWorker === "function") onSelectWorker(worker.id);
-          onToggle();
-        },
+        onClick: onToggle,
         "aria-expanded": expanded
       },
       h("time", null, formatDate(event.at)),
@@ -124,7 +121,7 @@ function EventRow({ event, nodes, index, expanded, onToggle, onSelectWorker }) {
   );
 }
 
-export function JournalPanel({ graph, onSelectWorker }) {
+export function JournalPanel({ graph }) {
   const [expandedKey, setExpandedKey] = useState("");
   const events = graph.events.slice(-10).reverse();
   return h(
@@ -159,7 +156,6 @@ export function JournalPanel({ graph, onSelectWorker }) {
               index,
               expanded: expandedKey === rowKey,
               onToggle: () => setExpandedKey((current) => (current === rowKey ? "" : rowKey)),
-              onSelectWorker,
               key
             });
           })
