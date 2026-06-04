@@ -1,5 +1,7 @@
 # Ultracode Plugin for Codex
 
+Part of the [Just Every Codex plugin marketplace](https://github.com/just-every/plugins).
+
 Ultracode helps Codex take on work that is too broad, risky, or multi-step for
 one thread to handle alone. It lets Codex break a task into focused parallel
 lanes, compare the evidence, verify claims, and bring back a clearer answer or
