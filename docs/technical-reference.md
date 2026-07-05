@@ -70,8 +70,24 @@ node scripts/ultracode-cli.js examples/deep-research.workflow.js --progress \
 
 ## Updates
 
-Plugin installs are snapshot-based. Install from a configured marketplace
-snapshot with:
+Plugin installs are snapshot-based. The blunt install path for this fork is to
+add the plugin repository itself as a marketplace, then install the plugin from
+that marketplace:
+
+```bash
+codex plugin marketplace add https://github.com/ySion/plugin-ultracode --ref main
+codex plugin add ultracode@plugin-ultracode
+```
+
+For local development, clone the repository and add the checkout:
+
+```bash
+git clone https://github.com/ySion/plugin-ultracode.git
+codex plugin marketplace add ./plugin-ultracode
+codex plugin add ultracode@plugin-ultracode
+```
+
+The upstream marketplace install remains:
 
 ```bash
 codex plugin marketplace add just-every/plugins
@@ -81,7 +97,8 @@ codex plugin add ultracode@just-every
 Current Codex versions accept marketplace sources as local paths,
 `owner/repo[@ref]`, HTTPS Git URLs, or SSH Git URLs. For a local checkout or fork
 branch, point Codex at a marketplace source that contains the Ultracode plugin
-entry and pin the ref when needed:
+entry and pin the ref when needed. A plugin repo can be used directly only when
+it also contains the marketplace manifest:
 
 ```bash
 codex plugin marketplace add ./path/to/marketplace

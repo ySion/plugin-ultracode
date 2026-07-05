@@ -62,10 +62,27 @@ node scripts/ultracode-cli.js @deep-research --args '{"topic":"Codex"}'
 ## Automatic updates
 
 Ultracode keeps itself fresh automatically after it has been installed from a configured marketplace snapshot.
+For this fork, the shortest install path is to add the plugin repository itself as a marketplace and then install
+from that marketplace:
+
+```bash
+codex plugin marketplace add https://github.com/ySion/plugin-ultracode --ref main
+codex plugin add ultracode@plugin-ultracode
+```
+
+For local development:
+
+```bash
+git clone https://github.com/ySion/plugin-ultracode.git
+codex plugin marketplace add ./plugin-ultracode
+codex plugin add ultracode@plugin-ultracode
+```
+
 Current Codex builds add marketplace sources with `codex plugin marketplace add <source>` where `<source>` can be
 a local path, `owner/repo[@ref]`, an HTTPS Git URL, or an SSH Git URL; Git sources can also use `--ref <ref>` and
-`--sparse <path>`. Install the plugin from that snapshot with `codex plugin add ultracode@<marketplace>` or
-`codex plugin add ultracode --marketplace <marketplace>`.
+`--sparse <path>`. The source must contain a Codex marketplace manifest; this repository includes one so it can be
+used directly as a marketplace source. Install the plugin from that snapshot with
+`codex plugin add ultracode@<marketplace>` or `codex plugin add ultracode --marketplace <marketplace>`.
 
 Before any command Ultracode runs `codex plugin marketplace upgrade <marketplace>` then
 `codex plugin add <plugin>@<marketplace>`, but **at most once per 24h** (tracked by a stamp file in the codex

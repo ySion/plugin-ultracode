@@ -88,8 +88,25 @@ signals instead of quietly smoothing them over.
 
 ## Install
 
-Recommended: install Ultracode from the Just Every plugin marketplace, then
-start a new Codex thread so the newly installed skill is loaded:
+Fastest path for this fork: add the plugin repository as a Codex marketplace,
+then install Ultracode from it:
+
+```bash
+codex plugin marketplace add https://github.com/ySion/plugin-ultracode --ref main
+codex plugin add ultracode@plugin-ultracode
+```
+
+If you want to hack on the plugin locally, clone it first and add the local
+checkout instead:
+
+```bash
+git clone https://github.com/ySion/plugin-ultracode.git
+codex plugin marketplace add ./plugin-ultracode
+codex plugin add ultracode@plugin-ultracode
+```
+
+Upstream install path: install Ultracode from the Just Every plugin marketplace,
+then start a new Codex thread so the newly installed skill is loaded:
 
 ```bash
 codex plugin marketplace add just-every/plugins
@@ -97,12 +114,12 @@ codex plugin add ultracode@just-every
 ```
 
 The current Codex CLI accepts marketplace sources as local paths,
-`owner/repo[@ref]`, HTTPS Git URLs, or SSH Git URLs. For development or fork
-testing, point Codex at a marketplace checkout or Git branch that contains the
-Ultracode plugin entry:
+`owner/repo[@ref]`, HTTPS Git URLs, or SSH Git URLs. The important bit is that
+the repository or path must contain a Codex marketplace manifest, not only a
+`.codex-plugin/plugin.json` file:
 
 ```bash
-codex plugin marketplace add ./path/to/marketplace
+codex plugin marketplace add ./path/to/marketplace-or-plugin-repo
 codex plugin marketplace add owner/repo --ref your-branch
 codex plugin add ultracode@<marketplace>
 ```
