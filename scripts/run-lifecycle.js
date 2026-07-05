@@ -55,6 +55,38 @@ function markAbandoned(record, reason, observedAt) {
   return next;
 }
 
+function isTerminalStatus(status) {
+  return status === "completed" || status === "partial" || status === "failed" || status === "cancelled" || status === "abandoned";
+}
+
+function terminalStatusFromItems(items) {
+  if (!Array.isArray(items) || items.length === 0) return null;
+  const statuses = items.map((item) => item && item.status).filter(Boolean);
+  if (statuses.length !== items.length) return null;
+  if (!statuses.every(isTerminalStatus)) return null;
+  const completed = statuses.filter((status) => status === "completed").length;
+  if (completed === statuses.length) return "completed";
+  if (completed === 0) {
+    if (statuses.every((status) => status === "cancelled")) return "cancelled";
+    return "failed";
+  }
+  return "partial";
+}
+
+function deriveJournaledTerminalRecord(record) {
+  if (!record || record.status !== "running") return null;
+  const itemStatus = terminalStatusFromItems(Array.isArray(record.workers) ? record.workers : record.steps);
+  if (!record.completed_at && !itemStatus) return null;
+  const next = { ...record };
+  next.status = itemStatus || "completed";
+  next.observed_status = next.status;
+  next.completed_at = next.completed_at || nowIso();
+  if (next.started_at && !next.duration_ms) {
+    next.duration_ms = Date.parse(next.completed_at) - Date.parse(next.started_at);
+  }
+  return next;
+}
+
 function evaluateControllerLiveness(controller, options = {}) {
   if (!controller || !Number.isInteger(controller.pid)) {
     return { live: null, reason: "controller pid was not journaled" };
@@ -92,6 +124,8 @@ function evaluateControllerLiveness(controller, options = {}) {
 
 function reconcileRunningRecord(record, options = {}) {
   if (!record || record.status !== "running") return { record, changed: false };
+  const journaledTerminal = deriveJournaledTerminalRecord(record);
+  if (journaledTerminal) return { record: journaledTerminal, changed: true };
   const controller = record.controller;
   if (!controller || !Number.isInteger(controller.pid)) {
     return { record, changed: false };

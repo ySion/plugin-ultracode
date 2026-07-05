@@ -100,6 +100,81 @@ const WORKER_SCHEMA = {
   required: ["summary", "findings", "recommended_actions", "risks", "verification", "confidence"]
 };
 
+function compactWorkerItem(item) {
+  if (item === undefined || item === null) return "";
+  if (typeof item === "string") return item;
+  if (typeof item !== "object") return String(item);
+  const title = item.title || item.name || item.label || item.file || item.path || item.id;
+  const detail =
+    item.summary ||
+    item.description ||
+    item.detail ||
+    item.reason ||
+    item.risk ||
+    item.action ||
+    item.finding ||
+    item.message;
+  if (title && detail && title !== detail) return `${title}: ${detail}`;
+  if (title || detail) return String(title || detail);
+  try {
+    return JSON.stringify(item);
+  } catch {
+    return String(item);
+  }
+}
+
+function normalizeWorkerList(value) {
+  const raw = Array.isArray(value) ? value : value === undefined || value === null ? [] : [value];
+  return raw.map(compactWorkerItem).map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeWorkerConfidence(value) {
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "low" || normalized === "medium" || normalized === "high") return normalized;
+    if (["certain", "strong"].includes(normalized)) return "high";
+    if (["uncertain", "weak"].includes(normalized)) return "low";
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (value >= 0.75) return "high";
+    if (value >= 0.4) return "medium";
+    return "low";
+  }
+  if (typeof value === "boolean") return value ? "high" : "low";
+  return "medium";
+}
+
+function normalizeDefaultWorkerOutput(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {
+      summary: compactWorkerItem(value) || "Worker completed without a structured summary.",
+      findings: [],
+      recommended_actions: [],
+      risks: [],
+      verification: [],
+      confidence: "medium"
+    };
+  }
+  const findings = normalizeWorkerList(value.findings || value.issues || value.observations);
+  const recommendedActions = normalizeWorkerList(
+    value.recommended_actions || value.recommendations || value.actions || value.next_steps
+  );
+  const risks = normalizeWorkerList(value.risks || value.concerns);
+  const verification = normalizeWorkerList(value.verification || value.tests || value.validation || value.evidence);
+  const summary =
+    compactWorkerItem(value.summary || value.overview || value.result || value.conclusion) ||
+    findings[0] ||
+    "Worker completed.";
+  return {
+    summary,
+    findings,
+    recommended_actions: recommendedActions,
+    risks,
+    verification,
+    confidence: normalizeWorkerConfidence(value.confidence)
+  };
+}
+
 const VERDICT_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -141,6 +216,95 @@ function defaultCodexBin() {
   }
 
   return "codex";
+}
+
+function resolveWindowsSpawn(bin, args) {
+  if (process.platform !== "win32") return { bin, args };
+
+  const rawBin = String(bin || "").trim();
+  if (!rawBin) return { bin, args };
+
+  const codexJs = resolveCodexJsForWindows(rawBin);
+  if (codexJs) return { bin: "node.exe", args: [codexJs, ...args] };
+
+  const ext = path.extname(rawBin).toLowerCase();
+
+  if (ext === ".ps1") {
+    return {
+      bin: "powershell.exe",
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", rawBin, ...args]
+    };
+  }
+
+  if (ext === ".cmd" || ext === ".bat") {
+    return {
+      bin: "cmd.exe",
+      args: ["/d", "/s", "/c", `"${rawBin}" ${args.map(quoteWindowsArg).join(" ")}`]
+    };
+  }
+
+  if (ext === ".js") {
+    return { bin: "node.exe", args: [rawBin, ...args] };
+  }
+
+  if (!ext) {
+    const siblingCmd = path.isAbsolute(rawBin) ? `${rawBin}.cmd` : null;
+    if (siblingCmd && fsSync.existsSync(siblingCmd)) {
+      return resolveWindowsSpawn(siblingCmd, args);
+    }
+    if (rawBin.toLowerCase() === "codex") {
+      const resolved = resolveCodexShimForWindows();
+      if (resolved) return resolveWindowsSpawn(resolved, args);
+    }
+  }
+
+  return { bin, args };
+}
+
+function resolveCodexJsForWindows(rawBin) {
+  const normalized = rawBin.replace(/[\\/]+$/, "");
+  const baseName = path.basename(normalized).toLowerCase();
+  const ext = path.extname(normalized).toLowerCase();
+  const looksLikeCodexShim =
+    baseName === "codex" || baseName === "codex.cmd" || baseName === "codex.ps1" || baseName === "codex.js";
+  if (!looksLikeCodexShim) return null;
+
+  const candidateDirs = [];
+  if (path.isAbsolute(normalized)) candidateDirs.push(path.dirname(normalized));
+  candidateDirs.push(
+    ...String(process.env.PATH || "")
+      .split(path.delimiter)
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+  );
+
+  for (const dir of candidateDirs) {
+    const candidate = path.join(dir, "node_modules", "@openai", "codex", "bin", "codex.js");
+    if (fsSync.existsSync(candidate)) return candidate;
+  }
+
+  if (ext === ".js" && fsSync.existsSync(normalized)) return normalized;
+  return null;
+}
+
+function quoteWindowsArg(value) {
+  const text = String(value);
+  if (!/[ \t\n\v"]/.test(text)) return text;
+  return `"${text.replace(/(["\\])/g, "\\$1")}"`;
+}
+
+function resolveCodexShimForWindows() {
+  const pathDirs = String(process.env.PATH || "")
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  for (const dir of pathDirs) {
+    for (const name of ["codex.cmd", "codex.bat", "codex.ps1", "codex.js"]) {
+      const candidate = path.join(dir, name);
+      if (fsSync.existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
 }
 
 function stateDir() {
@@ -235,12 +399,85 @@ function planWorkflow(input = {}) {
 async function writeJson(filePath, value) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmpPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await fs.rename(tmpPath, filePath);
+  const text = `${JSON.stringify(value, null, 2)}\n`;
+  await fs.writeFile(tmpPath, text, "utf8");
+  try {
+    await renameWithWindowsRetry(tmpPath, filePath);
+  } catch (error) {
+    await cleanupTempFile(tmpPath);
+    throw error;
+  }
+}
+
+function isWindowsFileLockError(error) {
+  return (
+    process.platform === "win32" &&
+    error &&
+    (error.code === "EPERM" || error.code === "EACCES" || error.code === "EBUSY")
+  );
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function renameWithWindowsRetry(tmpPath, filePath) {
+  const delays = process.platform === "win32" ? [25, 50, 100, 200, 400] : [0];
+  let lastError = null;
+  for (const delay of delays) {
+    if (delay) await sleep(delay);
+    try {
+      await fs.rename(tmpPath, filePath);
+      return;
+    } catch (error) {
+      if (!isWindowsFileLockError(error)) throw error;
+      lastError = error;
+    }
+  }
+
+  // Windows can briefly lock a file while the dashboard polls it. If atomic
+  // replace keeps failing, prefer a non-atomic direct write over losing progress.
+  if (process.platform === "win32" && lastError) {
+    const text = await fs.readFile(tmpPath, "utf8");
+    await writeFileWithWindowsRetry(filePath, text);
+    await cleanupTempFile(tmpPath);
+    return;
+  }
+
+  throw lastError || new Error(`Failed to rename ${tmpPath} -> ${filePath}`);
+}
+
+async function writeFileWithWindowsRetry(filePath, text) {
+  const delays = [25, 50, 100, 200, 400, 800];
+  let lastError = null;
+  for (const delay of delays) {
+    if (delay) await sleep(delay);
+    try {
+      await fs.writeFile(filePath, text, "utf8");
+      return;
+    } catch (error) {
+      if (!isWindowsFileLockError(error)) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError || new Error(`Failed to write ${filePath}`);
+}
+
+async function cleanupTempFile(tmpPath) {
+  try {
+    await fs.unlink(tmpPath);
+  } catch {
+    // Best-effort cleanup; a stale temp file is less harmful than failing a run.
+  }
 }
 
 async function readJson(filePath) {
   return JSON.parse(await fs.readFile(filePath, "utf8"));
+}
+
+async function readJsonWithText(filePath) {
+  const text = await fs.readFile(filePath, "utf8");
+  return { text, value: JSON.parse(text) };
 }
 
 async function latestStatePath() {
@@ -272,10 +509,19 @@ async function readWorkflow(input = {}) {
   if (!filePath) {
     return { status: "missing", message: "No Ultracode workflow state exists yet." };
   }
-  const record = await readJson(filePath);
+  const { text, value: record } = await readJsonWithText(filePath);
   const reconciled = reconcileRunningRecord(record);
   if (reconciled.changed) {
-    await writeJson(filePath, reconciled.record);
+    // Avoid a dashboard/status reader writing an abandoned snapshot over a final
+    // completed write from the controller process.
+    const latest = await readJsonWithText(filePath).catch(() => null);
+    if (!latest || latest.text === text) {
+      await writeJson(filePath, reconciled.record);
+    } else {
+      const next = reconcileRunningRecord(latest.value);
+      if (next.changed) await writeJson(filePath, next.record);
+      return next.record;
+    }
   }
   return reconciled.record;
 }
@@ -796,6 +1042,66 @@ function injectSchemaIntoPrompt(prompt, schema) {
   ].join("\n");
 }
 
+function jsonCandidatesFromText(text) {
+  const source = String(text || "").trim();
+  const candidates = [];
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/gi;
+  let match;
+  while ((match = fenced.exec(source))) {
+    if (match[1] && match[1].trim()) candidates.push(match[1].trim());
+  }
+
+  for (let start = 0; start < source.length; start += 1) {
+    const open = source[start];
+    if (open !== "{" && open !== "[") continue;
+    const close = open === "{" ? "}" : "]";
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < source.length; i += 1) {
+      const ch = source[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === "\\") {
+          escaped = true;
+        } else if (ch === "\"") {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch === "\"") {
+        inString = true;
+        continue;
+      }
+      if (ch === open) depth += 1;
+      if (ch === close) depth -= 1;
+      if (depth === 0) {
+        candidates.push(source.slice(start, i + 1).trim());
+        break;
+      }
+    }
+  }
+  return Array.from(new Set(candidates.filter(Boolean)));
+}
+
+function parseWorkerMessage(rawText, schema) {
+  const text = String(rawText || "").trim();
+  if (!schema) return text;
+  try {
+    return JSON.parse(text);
+  } catch (firstError) {
+    for (const candidate of jsonCandidatesFromText(text)) {
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        // 继续尝试下一个候选片段。
+      }
+    }
+    throw firstError;
+  }
+}
+
 function parseUsage(stdout) {
   let latest = null;
   for (const line of stdout.split(/\r?\n/)) {
@@ -831,7 +1137,8 @@ function spawnCodex({ bin, args, cwd, env, prompt, timeoutMs, onStreamEvent, sig
     let cancelled = false;
     let killTimer = null;
     let abortListener = null;
-    const child = childProcess.spawn(bin, args, {
+    const resolvedSpawn = resolveWindowsSpawn(bin, args);
+    const child = childProcess.spawn(resolvedSpawn.bin, resolvedSpawn.args, {
       cwd,
       env,
       stdio: ["pipe", "pipe", "pipe"]
@@ -1129,7 +1436,7 @@ async function runAppServerAttempt({ prompt, schema, opts, onStreamEvent }) {
   });
   let value;
   try {
-    value = schema ? JSON.parse(rawText) : String(rawText || "").trim();
+    value = parseWorkerMessage(rawText, schema);
   } catch (error) {
     const err = new Error(
       schema
@@ -1203,7 +1510,7 @@ async function runCodexAttempt({ prompt, schema, opts, onStreamEvent, resumeSess
     let value;
     try {
       const raw = await fs.readFile(lastMessagePath, "utf8");
-      value = schema ? JSON.parse(raw) : raw.trim();
+      value = parseWorkerMessage(raw, schema);
     } catch (error) {
       // Attach the exec result so callers can still account token usage for a
       // run that completed but whose last-message file was missing/unparseable.
@@ -1478,7 +1785,11 @@ async function spawnWorkerGuarded(prompt, opts, ctx, resumeSessionId = null) {
         return failedWorker(label, phase, error.message, execResult, usage, execResult ? execResult.duration_ms : 0);
       }
 
-      const { execResult, value } = attemptResult;
+      const { execResult } = attemptResult;
+      let value = attemptResult.value;
+      if (opts.schema === WORKER_SCHEMA) {
+        value = normalizeDefaultWorkerOutput(value);
+      }
       const usage = execResult.usage || parseUsage(execResult.stdout);
       accountUsage(ctx, usage);
 
@@ -2041,6 +2352,19 @@ function normalizeSpec(spec, index, defaults) {
   };
 }
 
+async function flushFinalRecord(record, persister) {
+  persister.schedule();
+  await persister.flush();
+  // Final terminal state must win over any stale dashboard/status observation.
+  await writeJson(record.state_path, record);
+}
+
+function normalizeWorkersSpecInput(value) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object") return [value];
+  return [];
+}
+
 async function runExplicitWorkflow(input) {
   const cwd = path.resolve(input.cwd || process.cwd());
   const baseSandbox = input.sandbox || "read-only";
@@ -2062,7 +2386,11 @@ async function runExplicitWorkflow(input) {
     reasoning_effort: baseEffort,
     timeout_ms: timeoutMs
   };
-  const specs = input.workers_spec.map((spec, index) => normalizeSpec(spec, index, defaults));
+  const rawSpecs = normalizeWorkersSpecInput(input.workers_spec);
+  if (rawSpecs.length === 0) {
+    throw new Error("workers_spec must be a non-empty array or a single worker spec object.");
+  }
+  const specs = rawSpecs.map((spec, index) => normalizeSpec(spec, index, defaults));
   const retryOpts = resolveRetryInput(input);
 
   const identity = workflowIdentity(
@@ -2180,14 +2508,14 @@ async function runExplicitWorkflow(input) {
 
   workflow.workers = results;
   finalizeRecord(workflow, ctx);
-  persister.schedule();
-  await persister.flush();
+  await flushFinalRecord(workflow, persister);
   return workflow;
 }
 
 async function runWorkflow(input = {}) {
-  if (Array.isArray(input.workers_spec) && input.workers_spec.length > 0) {
-    return runExplicitWorkflow(input);
+  const explicitSpecs = normalizeWorkersSpecInput(input.workers_spec);
+  if (explicitSpecs.length > 0) {
+    return runExplicitWorkflow({ ...input, workers_spec: explicitSpecs });
   }
 
   const options = normalizeOptions(input);
@@ -2262,8 +2590,7 @@ async function runWorkflow(input = {}) {
 
   workflow.workers = results;
   finalizeRecord(workflow, ctx);
-  persister.schedule();
-  await persister.flush();
+  await flushFinalRecord(workflow, persister);
   return workflow;
 }
 
@@ -2365,8 +2692,7 @@ async function resumeWorkflow(input = {}) {
   );
 
   finalizeRecord(record, ctx);
-  persister.schedule();
-  await persister.flush();
+  await flushFinalRecord(record, persister);
   return record;
 }
 
@@ -2980,8 +3306,7 @@ async function runPipelineSpec(input = {}) {
     }
   });
   finalizeRecord(workflow, ctx);
-  persister.schedule();
-  await persister.flush();
+  await flushFinalRecord(workflow, persister);
   return workflow;
 }
 

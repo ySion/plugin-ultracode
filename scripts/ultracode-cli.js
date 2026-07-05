@@ -320,6 +320,12 @@ function runJsonInput(parsed, options) {
     ? parsed
     : parsed && Array.isArray(parsed.steps)
       ? parsed.steps
+      : parsed && Array.isArray(parsed.workers_spec)
+        ? parsed.workers_spec
+        : parsed && parsed.workers_spec && typeof parsed.workers_spec === "object"
+          ? [parsed.workers_spec]
+          : parsed && typeof parsed.prompt === "string"
+            ? [parsed]
       : null;
   if (!steps || steps.length === 0) {
     throw new Error("JSON input must be a non-empty steps[] array (DAG) or a workers_spec[] array of {prompt}.");
