@@ -70,9 +70,32 @@ node scripts/ultracode-cli.js examples/deep-research.workflow.js --progress \
 
 ## Updates
 
-Plugin installs are snapshot-based. Ultracode auto-refreshes the marketplace
-snapshot before commands, at most once every 24 hours, then reinstalls the
-plugin for future Codex sessions.
+Plugin installs are snapshot-based. Install from a configured marketplace
+snapshot with:
+
+```bash
+codex plugin marketplace add just-every/plugins
+codex plugin add ultracode@just-every
+```
+
+Current Codex versions accept marketplace sources as local paths,
+`owner/repo[@ref]`, HTTPS Git URLs, or SSH Git URLs. For a local checkout or fork
+branch, point Codex at a marketplace source that contains the Ultracode plugin
+entry and pin the ref when needed:
+
+```bash
+codex plugin marketplace add ./path/to/marketplace
+codex plugin marketplace add owner/repo --ref your-branch
+codex plugin add ultracode@<marketplace>
+```
+
+If the source repository contains multiple plugins or marketplace entries, pass
+`--sparse <path>` to limit the checkout to the relevant subtree. Check
+`codex plugin marketplace add --help` and `codex plugin add --help` for the
+exact syntax supported by your installed Codex build.
+
+Ultracode auto-refreshes the configured marketplace snapshot before commands, at
+most once every 24 hours, then reinstalls the plugin for future Codex sessions.
 
 The current Codex thread keeps the version it already loaded. Start a new thread
 after an update if you need the refreshed plugin code immediately.

@@ -88,12 +88,29 @@ signals instead of quietly smoothing them over.
 
 ## Install
 
-Install Ultracode from the Just Every plugin marketplace:
+Recommended: install Ultracode from the Just Every plugin marketplace, then
+start a new Codex thread so the newly installed skill is loaded:
 
 ```bash
 codex plugin marketplace add just-every/plugins
 codex plugin add ultracode@just-every
 ```
+
+The current Codex CLI accepts marketplace sources as local paths,
+`owner/repo[@ref]`, HTTPS Git URLs, or SSH Git URLs. For development or fork
+testing, point Codex at a marketplace checkout or Git branch that contains the
+Ultracode plugin entry:
+
+```bash
+codex plugin marketplace add ./path/to/marketplace
+codex plugin marketplace add owner/repo --ref your-branch
+codex plugin add ultracode@<marketplace>
+```
+
+If the marketplace lives inside a larger repository, add the source with
+`--sparse <path>` so Codex only checks out the relevant subtree. Use
+`codex plugin marketplace add --help` and `codex plugin add --help` to confirm
+the exact flags supported by your installed Codex version.
 
 After installation, start a new Codex thread and ask Codex to use Ultracode on a
 task that deserves parallel investigation.

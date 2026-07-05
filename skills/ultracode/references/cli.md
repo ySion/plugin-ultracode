@@ -61,12 +61,17 @@ node scripts/ultracode-cli.js @deep-research --args '{"topic":"Codex"}'
 
 ## Automatic updates
 
-Ultracode keeps itself fresh automatically. Before any command it runs
-`codex plugin marketplace upgrade <marketplace>` then `codex plugin add <plugin>@<marketplace>`, but **at most
-once per 24h** (tracked by a stamp file in the codex home) and **best-effort** — a failure (offline, marketplace
-down) never breaks the command; it only logs `[ultracode] auto-update skipped: …`. The refresh updates the
-installed cache for *future* Codex sessions; the current thread keeps the version it already loaded, so it never
-mutates the running command.
+Ultracode keeps itself fresh automatically after it has been installed from a configured marketplace snapshot.
+Current Codex builds add marketplace sources with `codex plugin marketplace add <source>` where `<source>` can be
+a local path, `owner/repo[@ref]`, an HTTPS Git URL, or an SSH Git URL; Git sources can also use `--ref <ref>` and
+`--sparse <path>`. Install the plugin from that snapshot with `codex plugin add ultracode@<marketplace>` or
+`codex plugin add ultracode --marketplace <marketplace>`.
+
+Before any command Ultracode runs `codex plugin marketplace upgrade <marketplace>` then
+`codex plugin add <plugin>@<marketplace>`, but **at most once per 24h** (tracked by a stamp file in the codex
+home) and **best-effort** — a failure (offline, marketplace down) never breaks the command; it only logs
+`[ultracode] auto-update skipped: …`. The refresh updates the installed cache for *future* Codex sessions; the
+current thread keeps the version it already loaded, so it never mutates the running command.
 
 - Opt out with `--no-auto-update` on any command, or `ULTRACODE_NO_AUTO_UPDATE=1` (or `ULTRACODE_AUTO_UPDATE=0`).
 - `marketplace`: marketplace name, default `just-every` (or `ULTRACODE_MARKETPLACE`).
