@@ -97,6 +97,12 @@ The dashboard reads the same journal files as `status`. It shows run state,
 worker outputs, prompts, errors, phases, dependency lines, and run-level plus
 worker-level model and reasoning settings.
 
+Starting the dashboard does not automatically open or update the Codex in-app
+browser. The engine emits the URL through `ui.ready` and stores it on
+`record.ui.url`; a parent Codex agent should navigate the current in-app browser
+tab to that URL when browser control is available, or show the URL to the user
+when it is not.
+
 Disable it when you only want JSON:
 
 ```bash

@@ -43,6 +43,11 @@ as a `ui.ready` event. Disable it with `--no-ui` or `ULTRACODE_UI=0`. Optional U
 `--ui-host <host>`, and `--ui-port <port>` (default host `127.0.0.1`, port `0`). The dashboard serves checked-in
 assets from the plugin cache and reads the same journal files as `status`; it does not require `npm install`.
 
+Dashboard launch is intentionally split in two layers. The Ultracode engine starts or reuses the local dashboard
+server and emits the `ui.ready` URL, but it does not directly control Codex's in-app browser. When running from a
+Codex parent thread with browser control available, the parent agent should navigate the current in-app browser tab
+to `record.ui.url` as soon as `ui.ready` is observed; otherwise it should surface the URL as a clickable link.
+
 ### Canonical invocations
 
 ```bash

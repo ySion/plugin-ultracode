@@ -115,8 +115,10 @@ schemas, or no verification.
   the work is done: clear it only once the top-level outcome — synthesis, edits, verification — is genuinely
   settled. (Procedure: README "Pair with Codex goals".)
 - **Surface the dashboard.** Leave the run UI on; the moment `ui.ready` fires (or from the final `record.ui.url`)
-  open the URL in the Codex in-app browser, else print it as a plain clickable link so the user can watch the run
-  live. (Mechanics and flags: `references/cli.md`.)
+  navigate the current Codex in-app browser tab to that URL when browser control is available, else print it as a
+  plain clickable link so the user can watch the run live. Ultracode itself only starts the local dashboard server
+  and emits the URL; the parent Codex agent is responsible for updating the in-app browser. (Mechanics and flags:
+  `references/cli.md`.)
 
 ## Write the workflow
 
